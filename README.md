@@ -12,7 +12,7 @@ OpenAPI), see below.
 | `atlas/` | `openapi.yaml` (Atlas API), `modes.md` (modem ids, compat mapping), `service-codes.md` (custom codes, visibility), `winlink-compat.md` | [openRMS-Atlas](https://github.com/open-rms/openRMS-Atlas), [openRMS-Site](https://github.com/open-rms/openRMS-Site), Pat and other clients |
 | `watch/` | `feed.md`: watcher uploads, sightings, live stream, privacy | openRMS-Watch, openRMS-Atlas |
 | `accounts/` | `identity.md`: issuer, tokens and claims, service keys, webhooks | every openRMS service |
-| `rigs/` | `profile.md`, `profile.schema.json`, `openapi.yaml`, `examples/` | openRMS-Rigs, rigctlWeb, hamstack |
+| `rigs/` | `profile.md`, `profile.schema.json`, `cat-allowlist.json`, `openapi.yaml`, `examples/` | openRMS-Rigs, rigctlWeb, hamstack |
 
 `PLAN.md` lists the planned specs (Translator control API, config schema, modem model, host
 personalities, mode timing table) and the rules: semantic versioning per spec, OpenAPI as the
@@ -22,7 +22,7 @@ source of truth, conformance tests in openRMS-Testbed.
 
 - **MPL-2.0** ([LICENSE-MPL-2.0](LICENSE-MPL-2.0)): machine-readable contracts and code
   generated from them: `atlas/openapi.yaml`, `rigs/openapi.yaml`,
-  `rigs/profile.schema.json`, `rigs/examples/*`. Apps under any license can implement them.
+  `rigs/profile.schema.json`, `rigs/cat-allowlist.json`, `rigs/examples/*`. Apps under any license can implement them.
 - **CC-BY-4.0** ([LICENSE-CC-BY-4.0](LICENSE-CC-BY-4.0)): the prose specifications and docs
   (all `*.md` files).
 

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: openRMS Rigs API
-  version: 1.0.0-alpha
+  version: 1.1.0-alpha
   summary: Crowd-sourced radio settings profiles, per radio model and operation.
   description: |
     Profiles say how to set up one radio model for one operation (FT8, CW, Winlink ARDOP...).
@@ -179,7 +179,7 @@ components:
         expect: { type: object, description: "Acceptable values for checks: min, max, one_of, not" }
         unit: { type: string }
         display: { type: string }
-        safety: { enum: [rx, tx], description: "tx: ask the operator before applying" }
+        safety: { enum: [rx, tx], description: "tx: ask the operator before applying. Already raised by the server (profile.md, Safety); clients can use it as is." }
         check_only: { type: boolean, description: Verify only; never set }
         readable: { type: boolean, description: "The client can read the value back. false = can't be checked or restored automatically" }
         rigctld:
@@ -197,6 +197,11 @@ components:
             set_command: { type: string }
             values: { type: object, additionalProperties: { type: string } }
         manual: { type: object, properties: { menu: { type: string }, value: { type: string }, image: { type: string } } }
+        tolerance: { type: number, description: "level steps: how far either side of value a check accepts, the Hamlib step of the level's get range in Rigs' catalog (0 = exact). Use it for local checks so they match /check." }
+        menu:
+          type: array
+          items: { type: string }
+          description: "Menu path on the radio, outermost first: the step's `menu`, or manual.menu split on '>'. Show it as the manual fallback when a step can't be applied over CAT."
         hamlib: { type: string }
         firmware: { type: string }
         text: { type: string, description: One line for a person }
@@ -317,7 +322,31 @@ paths:
     get:
       tags: [profiles]
       summary: Every published profile with its document (offline bundles)
-      responses: { "200": { description: OK, content: { application/json: { schema: { type: object, properties: { generated_at: { type: string }, license: { type: string }, profiles: { type: array, items: { $ref: "#/components/schemas/Envelope" } } } } } } } }
+      description: |
+        Every published profile with its document and its apply-plan, for offline clients.
+        `generated_at` is the time of the newest change to a published profile (not the request
+        time), so the body and ETag stay the same until something changes: send If-None-Match and
+        expect a 304. Stats can still change the ETag without changing `generated_at`.
+        `plan` is exactly what `GET /profiles/{id}/apply-plan` returns for the published revision
+        (null only if the server can't build it), so offline clients get `readable`, raised
+        `safety`, level `tolerance` and `menu` without the Hamlib catalog.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  generated_at: { type: string, format: date-time }
+                  license: { type: string }
+                  profiles:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: "#/components/schemas/Envelope"
+                        - type: object
+                          properties: { plan: { oneOf: [{ $ref: "#/components/schemas/Plan" }, { type: "null" }] } }
   /profiles/{id}:
     parameters: [{ $ref: "#/components/parameters/id" }]
     get:
@@ -376,6 +405,9 @@ paths:
     post:
       tags: [profiles]
       summary: Dry run against values read from the radio (nothing is stored)
+      description: |
+        Matching rules are in profile.md ("Checks"); conformance vectors in
+        examples/check-vectors.json. Mode steps take the mode name only (no passband).
       parameters: [{ $ref: "#/components/parameters/id" }, { $ref: "#/components/parameters/revision" }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/CheckRequest" } } } }
       responses: { "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/CheckResult" } } } } }

@@ -1,6 +1,7 @@
 # openRMS Rigs profile format (v1)
 
-> Status: **draft**, 2026-11-25. Contract: `profile.schema.json` (JSON Schema 2020-12).
+> Status: **draft**, 2026-11-26. Contract: `profile.schema.json` (JSON Schema 2020-12) and
+> `cat-allowlist.json`.
 > API: `openapi.yaml`. Implemented by openRMS-Rigs. Consumed by rigctlWeb, hamstack, and anyone
 > who reads or writes profiles. Licence for profile content: **CC-BY-SA-4.0**.
 
@@ -34,10 +35,55 @@ Common fields:
 
 - `check_only: true` means verify the value and warn, but never set it. Example: AGC must not be OFF.
 - `expect` gives the values a check accepts: `min`, `max`, `one_of`, or `not` (values that are
-  a problem). Without it, a check wants `value` exactly, within one Hamlib step for levels.
+  a problem). Without it, a check wants `value` exactly, within one Hamlib step for levels
+  (see "Checks").
 - `safety: tx` marks a step that changes transmit behaviour (power, mic gain, compressor,
   modulation source). Clients ask the operator before applying it. The server raises a step to
-  `tx` when it knows the name changes transmit behaviour.
+  `tx` by the rule in "Safety".
+- `menu` is where the setting lives in the radio's own menus, outermost first
+  (`["OPERATION SETTING", "TX AUDIO", "PRMTRC EQ1"]`). Any step can have it. Clients show it
+  as the manual fallback when a step can't be applied over CAT. In the apply-plan, `menu` falls
+  back to `manual.menu` split on `>`.
+
+## Safety
+
+The server raises a step to `safety: tx` (in the stored document and in the apply-plan) when:
+
+- it is a `level` named RFPOWER, MICGAIN, COMP, VOXGAIN, VOXDELAY, ANTIVOX, KEYSPD, BKINDL,
+  BKIN_DLYMS, USB_AF_INPUT or TXEQ;
+- it is a `func` named COMP;
+- it is a `cat` step that sets a value (not `check_only`) and its `set` command, with each
+  placeholder filled with zeros, contains a command from a `safety: tx` family in
+  `cat-allowlist.json`.
+
+The author can mark any other step `tx`; the server never lowers one. The apply-plan's
+`safety` is final, so clients don't have to repeat this rule.
+
+## Checks
+
+`POST /check` (and any client that checks locally) compares each step with the value read from
+the radio, keyed by step id:
+
+- `manual` steps are always `manual`. A missing or null reading is `unknown`.
+- If `expect` has any field, it replaces `value` entirely: the reading must not equal any `not`
+  entry, must equal a `one_of` entry when given, and must be within `min`/`max` (inclusive, no
+  step tolerance).
+- Otherwise, with no `value`, the step is `ok`.
+- Numbers: `|reading − value| ≤ max(t, 1e-6)`. For `level` steps `t` is the step of that
+  level's **get** range in `rigctl --dump-caps` (`RFPOWER(0.05..1/0.003922)` gives 0.003922;
+  0 when the range is `0..0` or absent), taken from Rigs' catalog and given in the apply-plan
+  as `tolerance`. Local checks should use the plan's `tolerance`, not their own Hamlib's, so
+  they agree with `/check`. For every other kind `t` is 0. Readings may be numbers
+  or numeric strings (`"050"` equals 50).
+- Booleans (`func`): the reading counts as true only for `true`, `1`, `"1"` or `"true"`
+  (any case).
+- Strings: equal ignoring case.
+- `mode` steps compare the **mode name only**. Send what rigctld's `m` returns on its first line
+  (`PKTUSB`), not the passband; `passband_hz` is applied but never checked.
+- `cat` steps: send capture group 1 of `reply` as a string.
+
+`examples/check-vectors.json` has conformance cases for these rules and for the CAT allow-list.
+openRMS-Rigs runs them in its tests.
 - Audio targets (`audio.rx_target_dbfs`) let a client measure a level and give advice when the
   level can't be set over CAT.
 
@@ -60,18 +106,37 @@ air. Sources stay in the document but are left out of the apply-plan.
 A profile can't contain anything that **keys the transmitter**. The server rejects it with a 422:
 
 - the functions VOX, SBKIN, FBKIN, TBURST, TUNER and anything starting with SEND_;
-- raw CAT outside an **allow-list** of command families that only read or change settings.
-  ascii (Kenwood, Yaesu, Elecraft) allows EX, MN, MP, MD, DT, GT, AG, RG, SQ, RA, PA, IS, SH, BW,
-  FW, NA, NB, NL, NR, BC, CO, AN, AP, RL, ML, PC, MG, PR, KS, KP, SM and RM, with every
-  `;`-separated command checked. CI-V allows first bytes 04, 06, 11, 14, 15, 16 and 1A, but not
-  1646 (VOX) or 1647 (break-in). So TX, MX, VX, BI, AC, KY, PB, SW*, TT, ZZ* and Icom
-  1C, 17 and 28 are all refused;
+- raw CAT outside the allow-list in `cat-allowlist.json` (see "Raw CAT allow-list");
 - non-numeric level values (other than the catalog's named choices) and CAT values that aren't
   plain letters and digits. Commands can't contain spaces or line breaks. The check runs on
   the command as rendered with the value;
 - PTT and vfo_op TUNE, which can't be written in the format at all.
 
 Clients should still enforce their own rules. rigctlWeb refuses any plan that breaks them.
+
+## Raw CAT allow-list
+
+`cat-allowlist.json` is the machine-readable list of the raw CAT that a profile may contain
+and that a client may send from one. openRMS-Rigs loads it at startup instead of hard-coding
+it, and rigctlWeb uses the same file, so both enforce the same rules. It has, per protocol
+(`ascii` for Kenwood, Yaesu and Elecraft; `civ` for Icom):
+
+- `families`: allowed command prefixes, each saying whether it may `read` and/or `set`, and its
+  `safety`. When several prefixes match, the longest decides (CI-V `140A`, RF power, is `tx`
+  inside `14`, levels).
+- `denied`: prefixes refused even if a family matches, with a reason: transmit, MOX, VOX,
+  break-in, tuner, sending CW or messages, memory writes, frequency (use rigctld), power.
+  Anything that matches no family is refused too; the denied list makes the intent explicit
+  and gives test material.
+- `command_pattern` and the rules: check every command as sent (the read command, the set
+  template filled with zeros, and the set template rendered with the value); split ascii on `;`
+  and check each part; CI-V is the hex body only, without preamble, addresses or FD. Values
+  must match `value_pattern`.
+
+Menu items (Yaesu `EX`, Icom `1A05`) are allowed as a family. Some of them change transmit
+behaviour or assign keying to a serial line, so moderators review every `cat` step, and authors
+should mark such steps `safety: tx`. Changes to the file follow the Spec's versioning: adding a
+denied prefix is a patch, allowing a new family is a minor version.
 
 ## Lifecycle
 
@@ -102,4 +167,6 @@ stays a plain profile.
    restore automatically".
 4. Snapshot the current values, apply, and offer to restore.
 
-For offline use (field, EmComm), bundle `GET /dump.json` and use ETags to refresh it.
+For offline use (field, EmComm), bundle `GET /dump.json` and use ETags to refresh it. Each
+entry carries its `plan` (the same as the apply-plan, with `readable`, `safety`, `tolerance` and
+`menu`), so an offline client needs no catalog.
