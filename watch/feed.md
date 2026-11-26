@@ -14,39 +14,31 @@ feed, "heard on air" evidence on gateway pages, and a contributor list.
 - `POST /api/v1/me/watchers` (session) registers a watcher: `name`, `grid` (4 or 6 char),
   `locationPrecision` (`grid4` default | `grid6` | `hidden`), `public` (show in the contributor
   list, default true). Returns `{id, ...}`. `GET|PATCH|DELETE /api/v1/me/watchers/{id}`.
-- **Watcher token:** a Better Auth API key from a **separate key configuration**
-  (`configId: "watcher"`, prefix `ormsw_`, its own rate limit of about 400/hour for one POST
-  every 10 minutes; see §2). The kind of key comes from `configId`, **not** from metadata: users can set key
-  metadata themselves, so a `scope` field there can't be trusted. Ingest calls
-  `verifyApiKey({configId: "watcher"})`; the gateway heartbeat must reject non-default
-  configIds (it doesn't check today, so a watcher key would pass it; to be fixed with this work).
-  Watcher keys are minted **server-side only** by `POST /api/v1/me/watchers/{id}/key`, which
-  sets `metadata.watcherId`; ingest also checks that the watcher belongs to the key's
-  `referenceId`.
-- **Since 2026-11-25 (identity.md §5):** the device flow runs at openRMS-Accounts and yields an
-  OAuth access token for Atlas (`resource`/`aud` = Atlas). The watcher calls
-  `POST /api/v1/watch/link {watcherId} | {name, gridsquare?}` once with it and receives its
-  `ormsw_` key; `/api/v1/me/watchers/link`, `device_link` and `/api/v1/watch/link/complete` are gone.
-  The text below describes the earlier Atlas-hosted flow.
-- **Getting the token without copy-paste:** Better Auth `device-authorization` (RFC 8628).
-  The watcher's settings page shows a code and the URL `/{site}/link`; the user signs in and
-  approves, choosing an existing watcher or creating one. Note: the device flow yields a
-  **session token**, not an API key. The watcher uses it once (with the `bearer` plugin) to call
-  `POST /api/v1/me/watchers/{id}/key`, stores the returned `ormsw_` key, and signs the session
-  out. Phase 2: copy-paste of a key created on the site ships first and stays supported for
-  headless boxes.
-- Revoking the key (site dashboard) stops ingest immediately; the watcher shows "token rejected"
-  and keeps working locally.
-
-> **Identity is moving to openRMS-Accounts (2026-11-25, see `../accounts/identity.md`).** After
-> the AC1 extraction, the device flow above runs against `auth.openrms.dev` (client
-> `openrms-watch`, `resource=https://atlas.openrms.dev`) and yields an OAuth access token instead
-> of a Better Auth session. The watcher uses it once, as a bearer token to Atlas, to get
-> its `ormsw_` key, then discards it. Watcher keys, ingest and everything below are unchanged.
+- **Watcher key (since 2026-11-26, identity.md §5):** an openRMS API key (`ormk_…`) minted
+  at openRMS-Accounts for Atlas with scope `watch:ingest`, renewable. Atlas mints nothing.
+  1. The watcher runs the device flow at Accounts (client `openrms-watch`). With an access
+     token for Atlas it may list the account's watchers (`GET /api/v1/me/watchers`); with one
+     for Accounts (`resource` = issuer, scope `keys`) it mints the key
+     (`POST {issuer}/api/v1/keys`, identity.md §5.3).
+  2. It binds the key once: `POST /api/v1/watch/link {watcherId} | {name, gridsquare?}` with
+     `Authorization: Bearer ormk_…`. Atlas records `jti` → watcher; relinking moves the key.
+     The tokens are then discarded.
+  3. It renews the key before expiry (`POST {issuer}/api/v1/keys/renew`). The new key carries
+     `replaces: <old jti>` and takes over the old key's watcher on its first upload, whether or
+     not Atlas has heard of the old key's revocation yet.
+- An unlinked key gets `403` (`code: not_linked`), a key without `watch:ingest` `403`, a revoked
+  or expired key `401`. About 400 uploads per hour per key.
+- Stopping uploads: revoke the key at Accounts (`{issuer}/keys`), which stops it everywhere
+  within seconds (webhook) or 5 minutes (pull). `DELETE /api/v1/me/watchers/{id}/key` only
+  unlinks keys from that watcher. Either way the watcher shows "token rejected" and keeps
+  working locally.
+- Retired: the Atlas-minted `ormsw_` keys, `POST /api/v1/me/watchers/{id}/key` (now `410`) and
+  the Better Auth key configurations. Copy-paste still works: a person can make a
+  `watch:ingest` key at `{issuer}/keys` and the watcher links it with step 2.
 
 ## 2. Upload: `POST /api/v1/watch/ingest`
 
-`x-api-key: ormsw_...`, `content-type: application/x-ndjson`, at most 5000 lines or 5 MB. **Watchers batch: one POST every 10 minutes** (decided 2026-11-26),
+`Authorization: Bearer ormk_...` or `x-api-key: ormk_...` (a linked `watch:ingest` key, §1), `content-type: application/x-ndjson`, at most 5000 lines or 5 MB. **Watchers batch: one POST every 10 minutes** (decided 2026-11-26),
 sooner only when the queue nears the line limit. The live feed therefore lags real time by up
 to about 10 minutes; timestamps are the watcher's, so sightings are unaffected.
 One JSON object per line. Every event has a watcher-generated `id` (ULID), so retries are

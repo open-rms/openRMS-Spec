@@ -1,14 +1,23 @@
 openapi: 3.1.0
 info:
   title: openRMS Atlas API
-  version: 0.1.0
+  version: 0.2.0
   summary: Open, API-first directory of radio email gateways on every mode.
   description: |
     Read endpoints are public and need no key. Writes need an **openRMS Accounts**
     access token (`Authorization: Bearer <JWT>`, audience = this Atlas, see
     `openRMS-Spec/accounts/identity.md`) whose account has a callsign. Sign-up,
-    callsigns, clubs and staff roles are managed in openRMS Accounts. Gateway
-    software and watchers use API keys owned by Atlas (`orms_`, `ormsw_`).
+    callsigns, clubs and staff roles are managed in openRMS Accounts.
+
+    **API keys** (`ormk_…`) are minted at openRMS Accounts (`{issuer}/keys`) for this
+    Atlas and verified here offline (identity.md §5). Send `Authorization: Bearer ormk_…`
+    (`x-api-key: ormk_…` also works). A key works only on the routes listed with the
+    `key` scheme below, and only with one of the scopes named there. Atlas's key scopes
+    are published at `/.well-known/oauth-protected-resource` (RFC 9728): `heartbeat`,
+    `watch:ingest`, `gateways:read`, `gateways:write`. Staff, moderation and account
+    routes never take a key. A wrong-scope key gets `403` with
+    `WWW-Authenticate: Bearer error="insufficient_scope"`; a key over its hourly limit gets
+    `429` with `Retry-After`. The old Atlas-minted `orms_` and `ormsw_` keys no longer work.
 
     **Winlink-compatible feed:** `/gateway/status.json` returns the same shape as
     `https://api.winlink.org/gateway/status.json`, so Pat, EmComm Tools and other
@@ -170,8 +179,8 @@ paths:
     post:
       tags: [Gateway software]
       summary: Watcher upload (NDJSON), see openRMS-Spec/watch/feed.md
-      description: "x-api-key: ormsw_… (watcher key). At most 5000 lines or 5 MB; watchers batch one POST every 10 minutes. Events: frame, attempt, coverage, status. Idempotent per (watcher, event id)."
-      security: [{ apiKey: [] }]
+      description: "API key with `watch:ingest`, linked to a watcher with `POST /api/v1/watch/link` (403 `not_linked` otherwise). A renewed key (`replaces` claim) takes over its old key's watcher on first use. At most 5000 lines or 5 MB; watchers batch one POST every 10 minutes. Events: frame, attempt, coverage, status. Idempotent per (watcher, event id)."
+      security: [{ key: [watch:ingest] }, { keyHeader: [watch:ingest] }]
       requestBody: { required: true, content: { application/x-ndjson: { schema: { type: string } } } }
       responses:
         "200":
@@ -246,16 +255,17 @@ paths:
   /api/v1/me/watchers/{id}/key:
     post:
       tags: [Account]
-      summary: Mint (or rotate) the watcher's ormsw_ upload key; shown once
+      summary: "Gone: watcher keys are minted at openRMS Accounts (scope watch:ingest) and linked with POST /api/v1/watch/link"
+      deprecated: true
       security: [{ session: [] }]
       parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
-      responses: { "201": { description: "{key, watcherId}" } }
+      responses: { "410": { $ref: "#/components/responses/Error" } }
     delete:
       tags: [Account]
-      summary: Revoke the watcher's key
+      summary: Unlink every key from this watcher (to end a key everywhere, revoke it at Accounts)
       security: [{ session: [] }]
       parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
-      responses: { "204": { description: Revoked } }
+      responses: { "204": { description: Unlinked } }
   /api/v1/dumps/latest.json:
     get:
       tags: [Dumps]
@@ -299,13 +309,13 @@ paths:
     get:
       tags: [Account]
       summary: Gateways owned by the signed-in account
-      security: [{ session: [] }]
+      security: [{ session: [] }, { key: [gateways:read] }]
       responses: { "200": { description: Gateways } }
     post:
       tags: [Account]
       summary: List a gateway
       description: The gateway's base callsign must equal the account callsign.
-      security: [{ session: [] }]
+      security: [{ session: [] }, { key: [gateways:write] }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/GatewayInput" } } } }
       responses:
         "201": { description: Created, content: { application/json: { schema: { type: object, properties: { id: { type: string, format: uuid } } } } } }
@@ -316,46 +326,87 @@ paths:
     put:
       tags: [Account]
       summary: Replace a gateway and its channels
-      security: [{ session: [] }]
+      security: [{ session: [] }, { key: [gateways:write] }]
       parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/GatewayInput" } } } }
       responses: { "200": { description: Updated }, "404": { $ref: "#/components/responses/Error" } }
     delete:
       tags: [Account]
       summary: Remove a gateway
-      security: [{ session: [] }]
+      security: [{ session: [] }, { key: [gateways:write] }]
       parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
       responses: { "204": { description: Deleted } }
   /api/v1/me/keys:
     get:
       tags: [Account]
-      summary: Your gateway keys (orms_); only the first characters are shown
+      summary: Your Atlas API keys, as listed by openRMS Accounts (metadata only), and the page that manages them
       security: [{ session: [] }]
-      responses: { "200": { description: "{keys[]}" } }
+      responses:
+        "200":
+          description: "Keys for this Atlas from Accounts' GET /api/v1/users/{sub}/keys"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys: { type: array, items: { type: object, description: "Accounts' key metadata: jti, name, scopes, created, expires, last used" } }
+                  manage: { type: string, format: uri, description: "{issuer}/keys" }
+        "502": { $ref: "#/components/responses/Error" }
     post:
       tags: [Account]
-      summary: Create a gateway key, optionally limited to some of your gateways; shown once
+      summary: "Gone: keys are minted at openRMS Accounts"
+      deprecated: true
       security: [{ session: [] }]
-      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string }, gatewayIds: { type: array, items: { type: string, format: uuid } } } } } } }
-      responses: { "201": { description: "{id, key}" } }
+      responses: { "410": { description: "{error, manage}" } }
   /api/v1/me/keys/{id}:
     delete:
       tags: [Account]
-      summary: Revoke a gateway key
+      summary: "Gone: keys are revoked at openRMS Accounts"
+      deprecated: true
       security: [{ session: [] }]
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
-      responses: { "204": { description: Revoked } }
+      responses: { "410": { description: "{error, manage}" } }
   /api/v1/watch/link:
     post:
       tags: [Gateway software]
-      summary: "Watcher linking: with its device-flow token (aud = Atlas), pick or create a watcher and get its ormsw_ key"
-      description: Body `{watcherId}` or `{name, gridsquare?, locationPrecision?}`. Rotates the watcher's key. The device flow itself runs in openRMS Accounts.
-      security: [{ session: [] }]
-      responses: { "200": { description: "{key, watcherId, name}" }, "403": { $ref: "#/components/responses/Error" }, "404": { $ref: "#/components/responses/Error" } }
+      summary: "Watcher linking: bind the calling watch:ingest key to one of the account's watchers, or to a new one"
+      description: |
+        Body `{watcherId}` or `{name, gridsquare?, locationPrecision?}`. Atlas records the key's
+        `jti` → watcher (identity.md §5.6); nothing is minted here. Relinking moves the key to
+        the named watcher. openRMS Watch mints the key at Accounts through the device flow, then
+        calls this once. A sign-in token gets 401 `key_required`.
+      security: [{ key: [watch:ingest] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - { type: object, required: [watcherId], properties: { watcherId: { type: string, format: uuid } } }
+                - { type: object, required: [name], properties: { name: { type: string }, gridsquare: { type: string }, locationPrecision: { type: string, enum: [grid4, grid6, hidden] } } }
+      responses: { "200": { description: "{watcherId, name}" }, "403": { $ref: "#/components/responses/Error" }, "404": { $ref: "#/components/responses/Error" } }
+  /.well-known/oauth-protected-resource:
+    get:
+      tags: [Account]
+      summary: OAuth Protected Resource Metadata (RFC 9728) with the key scopes Atlas offers
+      description: Accounts reads `openrms_key_scopes` to offer them when someone makes an Atlas key (identity.md §5.2). Never lists staff powers.
+      responses:
+        "200":
+          description: Metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  resource: { type: string, description: This Atlas's audience }
+                  resource_name: { type: string }
+                  authorization_servers: { type: array, items: { type: string } }
+                  scopes_supported: { type: array, items: { type: string } }
+                  openrms_key_scopes: { type: array, items: { type: object, properties: { scope: { type: string }, description: { type: string } } } }
   /api/v1/hooks/accounts:
     post:
       tags: [Moderation]
-      summary: Accounts webhooks (identity.md §7), signed with openrms-signature
+      summary: "Accounts webhooks (identity.md §7), signed with openrms-signature; key.revoked feeds the key denylist"
       responses: { "200": { description: Applied (idempotent per event id) }, "401": { $ref: "#/components/responses/Error" } }
   /api/v1/me/claimable:
     get:
@@ -403,7 +454,7 @@ paths:
     post:
       tags: [Account]
       summary: Confirm a hand-maintained listing is still on the air
-      security: [{ session: [] }]
+      security: [{ session: [] }, { key: [heartbeat] }, { key: [gateways:write] }]
       parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
       responses: { "200": { description: OK } }
   /api/v1/gateways/{id}/report:
@@ -420,10 +471,10 @@ paths:
       tags: [Gateway software]
       summary: Gateway heartbeat
       description: |
-        Gateway key (orms_) from `POST /api/v1/me/keys`, owned by the gateway's owner or a member of its club.
-        A key whose metadata has `gatewayIds` only works for those gateways.
+        API key with `heartbeat` (keys only; a sign-in token gets 401 `key_required`), owned by
+        the gateway's owner or a member of its club. At most 120 per hour per key.
         A heartbeat within STALE_AFTER_HOURS (default 3) makes the gateway `online`.
-      security: [{ apiKey: [] }]
+      security: [{ key: [heartbeat] }, { keyHeader: [heartbeat] }]
       parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
       requestBody:
         content:
@@ -541,10 +592,16 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: openRMS Accounts access token (aud = Atlas). Named "session" for history.
-    apiKey:
+    key:
+      type: http
+      scheme: bearer
+      bearerFormat: "ormk_ + JWT"
+      description: "openRMS API key minted at openRMS Accounts for this Atlas (identity.md §5). The listed roles are the key scopes the route accepts; any one is enough."
+    keyHeader:
       type: apiKey
       in: header
       name: x-api-key
+      description: "The same ormk_ key in x-api-key (for clients that already send it, e.g. openRMS Watch)."
   responses:
     Error:
       description: Error
