@@ -157,6 +157,18 @@ host (`reset-2fa`), audited, which also ends the account's sessions and refresh 
 Second factors do not change the device flow or §3a: both run inside an Accounts session that
 has already passed them.
 
+### 4c. Export and self-service deletion
+
+- `GET {issuer}/api/v1/me/account/export` (session): everything Accounts holds about the account
+  as one JSON file (account, profile, radios, clubs, sessions, connected apps, passkey names,
+  API key metadata, activity). Each service exports its own data.
+- Deletion: on the account page, with the password, the callsign typed to confirm, and a
+  sign-in (with any second factor) within the last 15 minutes. Refused for a club's only owner
+  and for a superadmin. The account is signed out everywhere and deleted after **7 days**; an
+  emailed link (or signing in) cancels it. When it runs, services get `club.member_removed`
+  for each club, `key.revoked` for each live key and `user.deleted`, and must delete or
+  anonymise what they hold for that `sub`. Staff deletion (`remove-user`) is immediate.
+
 Claims in a token are as fresh as the token (at most 15 min). A service that needs the current
 value for a sensitive action (deleting, transferring ownership) asks Accounts (§6).
 
