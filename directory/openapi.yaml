@@ -1,0 +1,591 @@
+openapi: 3.1.0
+info:
+  title: openRMS Directory API
+  version: 0.1.0
+  summary: Open, API-first directory of radio email gateways on every mode.
+  description: |
+    Read endpoints are public and need no key. Writes need an **openRMS Accounts**
+    access token (`Authorization: Bearer <JWT>`, audience = this Directory, see
+    `openRMS-Spec/accounts/identity.md`) whose account has a callsign. Sign-up,
+    callsigns, clubs and staff roles are managed in openRMS Accounts. Gateway
+    software and watchers use API keys owned by the Directory (`orms_`, `ormsw_`).
+
+    **Winlink-compatible feed:** `/gateway/status.json` returns the same shape as
+    `https://api.winlink.org/gateway/status.json`, so Pat, EmComm Tools and other
+    clients can read it with no code changes. See `winlink-compat.md`.
+
+    Mode codes and modem ids: `modes.md`.
+  license:
+    name: MPL-2.0
+    identifier: MPL-2.0
+servers:
+  - url: http://localhost:8787
+    description: Local development
+tags:
+  - name: Gateways
+  - name: Compat
+    description: Winlink-shaped feed for existing clients
+  - name: Dumps
+  - name: Account
+  - name: Gateway software
+  - name: Moderation
+
+paths:
+  /api/v1/gateways:
+    get:
+      tags: [Gateways]
+      summary: List gateways
+      description: Channel filters (modem, band, serviceCode) drop non-matching channels and then gateways left with none.
+      parameters:
+        - { name: modem, in: query, schema: { type: string }, description: "Comma-separated modem ids, e.g. `mercury,ardop`", example: mercury }
+        - { name: band, in: query, schema: { type: string }, description: "Comma-separated bands, e.g. `40m,80m`" }
+        - { name: serviceCode, in: query, schema: { type: string }, description: Comma-separated service codes }
+        - { name: status, in: query, schema: { type: string }, description: "Comma-separated: online, listed, stale, offline" }
+        - { name: source, in: query, schema: { type: string, enum: [openrms, winlink] } }
+        - { name: claimed, in: query, schema: { type: boolean }, description: "Only gateways with sysop-provided details (owner listings and claimed Winlink listings)" }
+        - { name: q, in: query, schema: { type: string }, description: Callsign or comment substring }
+        - { name: grid, in: query, schema: { type: string }, description: Sort by distance from this Maidenhead locator }
+        - { name: lat, in: query, schema: { type: number } }
+        - { name: lon, in: query, schema: { type: number } }
+        - { name: radiusKm, in: query, schema: { type: number }, description: Requires grid or lat/lon }
+        - { name: limit, in: query, schema: { type: integer, default: 5000, maximum: 5000 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        "200":
+          description: Gateways
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [total, offset, limit, gateways]
+                properties:
+                  total: { type: integer }
+                  offset: { type: integer }
+                  limit: { type: integer }
+                  gateways: { type: array, items: { $ref: "#/components/schemas/Gateway" } }
+  /api/v1/gateways/{idOrCallsign}:
+    get:
+      tags: [Gateways]
+      summary: One gateway by id or callsign (with SSID)
+      parameters: [{ name: idOrCallsign, in: path, required: true, schema: { type: string } }]
+      responses:
+        "200": { description: Gateway, content: { application/json: { schema: { $ref: "#/components/schemas/Gateway" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/modems:
+    get:
+      tags: [Gateways]
+      summary: Modem registry
+      responses:
+        "200":
+          description: Known modems and how each appears in the compat feed
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Modem" } } } }
+  /api/v1/stats:
+    get:
+      tags: [Gateways]
+      summary: Counts by modem, source, status and band
+      responses: { "200": { description: Stats, content: { application/json: { schema: { type: object } } } } }
+
+  /gateway/status.json:
+    get:
+      tags: [Compat]
+      summary: Winlink-compatible gateway status
+      parameters:
+        - { name: Mode, in: query, schema: { type: string, enum: [AnyAll, Packet, Pactor, RobustPacket, AllHf], default: AnyAll } }
+        - { name: HistoryHours, in: query, schema: { type: integer, default: 48 }, description: Gateways heard within this many hours (hand-confirmed openRMS listings are always included) }
+        - { name: ServiceCodes, in: query, schema: { type: array, items: { type: string }, default: [PUBLIC] }, style: form, explode: true, description: Repeat or comma-separate }
+        - { name: key, in: query, schema: { type: string }, description: Accepted and ignored, for drop-in compatibility }
+        - { name: source, in: query, schema: { type: string, enum: [openrms, winlink] }, description: openRMS extension }
+        - { name: extensions, in: query, schema: { type: boolean }, description: "openRMS extension: add an `OpenRMS` object to gateways and channels with the real modem" }
+      responses:
+        "200": { description: Feed, content: { application/json: { schema: { $ref: "#/components/schemas/WinlinkStatus" } } } }
+    post:
+      tags: [Compat]
+      summary: Same as GET, parameters form-encoded (what Pat sends)
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                Mode: { type: string }
+                HistoryHours: { type: integer }
+                ServiceCodes: { type: array, items: { type: string } }
+                key: { type: string }
+      responses:
+        "200": { description: Feed, content: { application/json: { schema: { $ref: "#/components/schemas/WinlinkStatus" } } } }
+  /export/pat/rmslist.json:
+    get:
+      tags: [Compat]
+      summary: The compat feed as a download named the way Pat names its cache file
+      description: Save to `$XDG_DATA_HOME/pat/` (see `pat-rmslist-sync.sh`). Same parameters as `/gateway/status.json`.
+      responses:
+        "200": { description: Feed, content: { application/json: { schema: { $ref: "#/components/schemas/WinlinkStatus" } } } }
+
+  /api/v1/watch/ingest:
+    post:
+      tags: [Gateway software]
+      summary: Watcher upload (NDJSON), see openRMS-Spec/watch/feed.md
+      description: "x-api-key: ormsw_… (watcher key). At most 1000 lines or 1 MB. Events: frame, attempt, coverage, status. Idempotent per (watcher, event id)."
+      security: [{ apiKey: [] }]
+      requestBody: { required: true, content: { application/x-ndjson: { schema: { type: string } } } }
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted: { type: integer }
+                  duplicate: { type: integer }
+                  rejected: { type: array, items: { type: object, properties: { id: { type: [string, "null"] }, error: { type: string } } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+        "429": { description: "Slow down; honour Retry-After" }
+  /api/v1/watch/sightings:
+    get:
+      tags: [Gateways]
+      summary: Stations heard on the air by watchers (derived; no client callsigns)
+      parameters:
+        - { name: days, in: query, schema: { type: integer, default: 30, maximum: 90 } }
+        - { name: gateway, in: query, schema: { type: string } }
+        - { name: band, in: query, schema: { type: string } }
+        - { name: confidence, in: query, schema: { type: string, enum: [single, confirmed, called] } }
+        - { name: resolution, in: query, schema: { type: string, enum: [unique, ambiguous, unknown] } }
+        - { name: heard, in: query, schema: { type: boolean } }
+      responses: { "200": { description: "{days, total, sightings[]}" } }
+  /api/v1/watch/contributors:
+    get:
+      tags: [Gateways]
+      summary: Public watchers active in the last N days (max 90)
+      parameters: [{ name: days, in: query, schema: { type: integer, default: 7 } }]
+      responses: { "200": { description: "{days, totals, contributors[]}" } }
+  /api/v1/watch/events:
+    get:
+      tags: [Gateways]
+      summary: Public projection of watcher frames and attempts
+      description: Client callsigns read "a client" unless the admin setting publish_client_callsigns is on and the callsign (or its base call) is not opted out. Staff with watcher:view-clients always see them.
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 100, maximum: 1000 } }
+        - { name: after, in: query, schema: { type: integer }, description: Oldest first, ids greater than this }
+        - { name: before, in: query, schema: { type: integer } }
+        - { name: since, in: query, schema: { type: string, format: date-time } }
+        - { name: band, in: query, schema: { type: string } }
+        - { name: modem, in: query, schema: { type: string } }
+        - { name: gateway, in: query, schema: { type: string } }
+      responses: { "200": { description: "{events[], next}" } }
+  /api/v1/watch/stream:
+    get:
+      tags: [Gateways]
+      summary: Live feed (Server-Sent Events); resumes from Last-Event-ID within 15 minutes
+      parameters:
+        - { name: band, in: query, schema: { type: string } }
+        - { name: modem, in: query, schema: { type: string } }
+        - { name: gateway, in: query, schema: { type: string } }
+        - { name: lastEventId, in: query, schema: { type: integer } }
+      responses: { "200": { description: "text/event-stream: event hello, then event frame (same shape as /events items)" } }
+  /api/v1/watch/callsigns:
+    get:
+      tags: [Gateways]
+      summary: Listed callsigns with Mercury CRC16 and every Mercury dial frequency (ETag)
+      responses: { "200": { description: "[{callsign, crc, gatewayId, source, modems, dialHz[]}]" }, "304": { description: Not modified } }
+  /api/v1/me/watchers:
+    get: { tags: [Account], summary: Your watchers, security: [{ session: [] }], responses: { "200": { description: Watchers } } }
+    post:
+      tags: [Account]
+      summary: Register a watcher
+      security: [{ session: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string }, gridsquare: { type: string }, locationPrecision: { type: string, enum: [grid4, grid6, hidden] }, public: { type: boolean } } } } } }
+      responses: { "201": { description: Created } }
+  /api/v1/me/watchers/{id}/key:
+    post:
+      tags: [Account]
+      summary: Mint (or rotate) the watcher's ormsw_ upload key; shown once
+      security: [{ session: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { "201": { description: "{key, watcherId}" } }
+    delete:
+      tags: [Account]
+      summary: Revoke the watcher's key
+      security: [{ session: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { "204": { description: Revoked } }
+  /api/v1/dumps/latest.json:
+    get:
+      tags: [Dumps]
+      summary: Full directory dump (ETag)
+      responses: { "200": { description: Dump }, "304": { description: Not modified } }
+  /api/v1/dumps/latest.geojson:
+    get:
+      tags: [Dumps]
+      summary: Gateways as GeoJSON points
+      responses: { "200": { description: GeoJSON }, "304": { description: Not modified } }
+  /api/v1/dumps/latest.csv:
+    get:
+      tags: [Dumps]
+      summary: One row per channel
+      responses: { "200": { description: CSV }, "304": { description: Not modified } }
+
+  /api/v1/me:
+    get:
+      tags: [Account]
+      summary: The signed-in account
+      security: [{ session: [] }]
+      responses:
+        "200":
+          description: Account
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      name: { type: string }
+                      email: { type: string }
+                      callsign: { type: string }
+                      callsignVerified: { type: boolean }
+                      role: { type: string }
+        "401": { $ref: "#/components/responses/Error" }
+  /api/v1/me/gateways:
+    get:
+      tags: [Account]
+      summary: Gateways owned by the signed-in account
+      security: [{ session: [] }]
+      responses: { "200": { description: Gateways } }
+    post:
+      tags: [Account]
+      summary: List a gateway
+      description: The gateway's base callsign must equal the account callsign.
+      security: [{ session: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/GatewayInput" } } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { type: object, properties: { id: { type: string, format: uuid } } } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /api/v1/me/gateways/{id}:
+    put:
+      tags: [Account]
+      summary: Replace a gateway and its channels
+      security: [{ session: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/GatewayInput" } } } }
+      responses: { "200": { description: Updated }, "404": { $ref: "#/components/responses/Error" } }
+    delete:
+      tags: [Account]
+      summary: Remove a gateway
+      security: [{ session: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { "204": { description: Deleted } }
+  /api/v1/me/keys:
+    get:
+      tags: [Account]
+      summary: Your gateway keys (orms_); only the first characters are shown
+      security: [{ session: [] }]
+      responses: { "200": { description: "{keys[]}" } }
+    post:
+      tags: [Account]
+      summary: Create a gateway key, optionally limited to some of your gateways; shown once
+      security: [{ session: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string }, gatewayIds: { type: array, items: { type: string, format: uuid } } } } } } }
+      responses: { "201": { description: "{id, key}" } }
+  /api/v1/me/keys/{id}:
+    delete:
+      tags: [Account]
+      summary: Revoke a gateway key
+      security: [{ session: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "204": { description: Revoked } }
+  /api/v1/watch/link:
+    post:
+      tags: [Gateway software]
+      summary: "Watcher linking: with its device-flow token (aud = Directory), pick or create a watcher and get its ormsw_ key"
+      description: Body `{watcherId}` or `{name, gridsquare?, locationPrecision?}`. Rotates the watcher's key. The device flow itself runs in openRMS Accounts.
+      security: [{ session: [] }]
+      responses: { "200": { description: "{key, watcherId, name}" }, "403": { $ref: "#/components/responses/Error" }, "404": { $ref: "#/components/responses/Error" } }
+  /api/v1/hooks/accounts:
+    post:
+      tags: [Moderation]
+      summary: Accounts webhooks (identity.md §7), signed with openrms-signature
+      responses: { "200": { description: Applied (idempotent per event id) }, "401": { $ref: "#/components/responses/Error" } }
+  /api/v1/me/claimable:
+    get:
+      tags: [Account]
+      summary: Winlink listings under the account's callsign, with claim state
+      security: [{ session: [] }]
+      responses: { "200": { description: "Gateways, each with claimedByMe and claimedByOther" } }
+  /api/v1/me/gateways/{id}/claim:
+    post:
+      tags: [Account]
+      summary: Claim a Winlink listing whose base callsign is the account's
+      description: Never takes a claim held by another account (409). Channels, location and status keep coming from the Winlink import.
+      security: [{ session: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200": { description: Claimed }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /api/v1/me/gateways/{id}/details:
+    put:
+      tags: [Account]
+      summary: Set the sysop's details on a claimed Winlink listing
+      description: Shown on the site and in the API. Not added to the Winlink-compatible feed, which keeps Winlink's own data.
+      security: [{ session: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                comments: { type: string, maxLength: 1000 }
+                software: { type: string }
+                emcomm: { $ref: "#/components/schemas/Emcomm" }
+      responses: { "200": { description: Saved }, "404": { $ref: "#/components/responses/Error" } }
+  /api/v1/me/gateways/{id}/release:
+    post:
+      tags: [Account]
+      summary: Give up a claim; the added details are removed, the Winlink listing stays
+      security: [{ session: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { "200": { description: Released } }
+  /api/v1/me/gateways/{id}/confirm:
+    post:
+      tags: [Account]
+      summary: Confirm a hand-maintained listing is still on the air
+      security: [{ session: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { "200": { description: OK } }
+  /api/v1/gateways/{id}/report:
+    post:
+      tags: [Account]
+      summary: Report a listing to moderators
+      security: [{ session: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string } } } } } }
+      responses: { "201": { description: Reported } }
+
+  /api/v1/gateways/{id}/heartbeat:
+    post:
+      tags: [Gateway software]
+      summary: Gateway heartbeat
+      description: |
+        Gateway key (orms_) from `POST /api/v1/me/keys`, owned by the gateway's owner or a member of its club.
+        A key whose metadata has `gatewayIds` only works for those gateways.
+        A heartbeat within STALE_AFTER_HOURS (default 3) makes the gateway `online`.
+      security: [{ apiKey: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                currentFrequencyHz: { type: integer }
+                currentModem: { $ref: "#/components/schemas/ModemId" }
+                busy: { type: boolean }
+                software: { type: string, example: "LinBPQ 6.0.24" }
+      responses:
+        "200": { description: OK }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /api/v1/admin/me:
+    get:
+      tags: [Moderation]
+      summary: The caller's staff role and permissions
+      security: [{ session: [] }]
+      responses: { "200": { description: Role and permissions }, "403": { $ref: "#/components/responses/Error" } }
+  /api/v1/admin/audit:
+    get:
+      tags: [Moderation]
+      summary: Latest staff actions (permission audit:view; admin and superadmin)
+      security: [{ session: [] }]
+      responses: { "200": { description: Entries } }
+  /api/v1/admin/gateways/{id}/hide:
+    post:
+      tags: [Moderation]
+      summary: Hide or unhide a listing (admin)
+      security: [{ session: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { hidden: { type: boolean }, reason: { type: string } } } } } }
+      responses: { "200": { description: OK } }
+
+components:
+  securitySchemes:
+    session:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: openRMS Accounts access token (aud = the Directory). Named "session" for history.
+    apiKey:
+      type: apiKey
+      in: header
+      name: x-api-key
+  responses:
+    Error:
+      description: Error
+      content: { application/json: { schema: { type: object, properties: { error: { type: string } } } } }
+  schemas:
+    ModemId:
+      type: string
+      enum: [packet, robust-packet, pactor, ardop, vara-hf, vara-fm, mercury, data2g, modem73, ion-hf, freedata, other]
+    Modem:
+      type: object
+      properties:
+        id: { $ref: "#/components/schemas/ModemId" }
+        label: { type: string }
+        variants: { type: array, items: { type: string } }
+        defaultVariant: { type: string }
+        band: { type: string, enum: [hf, vhf, any] }
+        homepage: { type: string }
+        winlinkNative: { type: boolean }
+        compat:
+          type: [object, "null"]
+          properties:
+            supportedModes: { type: string }
+            mode: { type: integer }
+            serviceCode: { type: [string, "null"] }
+    Channel:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        frequencyHz: { type: integer, description: Centre frequency, as Winlink lists it }
+        band: { type: [string, "null"] }
+        modem: { $ref: "#/components/schemas/ModemId" }
+        modemLabel: { type: string }
+        variant: { type: [string, "null"], description: "Bandwidth or speed label: 500, 2750, 1200, WIDE…" }
+        modemVersion: { type: [string, "null"] }
+        serviceCode: { type: string }
+        operatingHours: { type: string }
+        antenna: { type: string }
+        radioRange: { type: string }
+        gridsquare: { type: [string, "null"] }
+        baud: { type: string }
+        notes: { type: string }
+        winlinkSupportedModes: { type: [string, "null"], description: Winlink's own string, for Winlink-sourced rows }
+        winlinkMode: { type: [integer, "null"] }
+        compatSupportedModes: { type: [string, "null"], description: Owner override of the compat SupportedModes }
+    Gateway:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        source: { type: string, enum: [openrms, winlink], description: "openrms: listed by its owner. winlink: imported from api.winlink.org" }
+        callsign: { type: string, example: W1AW-10 }
+        baseCallsign: { type: string }
+        ownerVerified: { type: boolean, description: "The owner's callsign has been verified in openRMS Accounts (for a club gateway, the club callsign)" }
+        club:
+          type: [object, "null"]
+          description: Set when the gateway is listed or claimed under a club callsign
+          properties: { callsign: { type: string }, name: { type: string }, verified: { type: boolean } }
+        latitude: { type: [number, "null"] }
+        longitude: { type: [number, "null"] }
+        gridsquare: { type: [string, "null"] }
+        locationPrecision: { type: string, enum: [exact, grid6, grid4] }
+        comments: { type: string, description: "Winlink rows: the Winlink list's comment. Owner listings: the sysop's." }
+        ownerComments: { type: string, description: Added by the sysop who claimed a Winlink listing }
+        claimed: { type: boolean, description: A Winlink listing claimed by the account holding its callsign }
+        claimedAt: { type: [string, "null"], format: date-time }
+        software: { type: [string, "null"] }
+        winlinkListed: { type: boolean }
+        alsoListedBy: { type: array, items: { type: string } }
+        unverifiedConflict: { type: boolean, description: "Owner listing not yet verified whose callsign is also on the Winlink list. Shown, but kept out of the compat feed; the Winlink row stays authoritative." }
+        emcomm: { $ref: "#/components/schemas/Emcomm" }
+        live: { type: object, description: Last heartbeat payload }
+        status: { type: string, enum: [online, listed, stale, offline] }
+        lastHeartbeatAt: { type: [string, "null"], format: date-time }
+        confirmedAt: { type: [string, "null"], format: date-time }
+        lastSeenAt: { type: [string, "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        distanceKm: { type: integer, description: Present when grid or lat/lon was given }
+        heardOnAir:
+          type: [object, "null"]
+          description: Independent evidence from watchers that the station transmitted. Separate from status; never edits the listing.
+          properties:
+            lastHeard: { type: string, format: date-time }
+            dialHz: { type: integer }
+            watchers: { type: integer }
+            confidence: { type: string, enum: [single, confirmed] }
+            sightings: { type: integer }
+        channels: { type: array, items: { $ref: "#/components/schemas/Channel" } }
+    Emcomm:
+      type: object
+      properties:
+        backupPower: { type: array, items: { type: string, enum: [battery, solar, generator, wind, grid-only] } }
+        runtimeHours: { type: [number, "null"] }
+        offGrid: { type: boolean }
+        lastTested: { type: [string, "null"], format: date }
+        servedAgencies: { type: string }
+        aresRaces: { type: boolean }
+        activationContact: { type: string }
+    ChannelInput:
+      type: object
+      required: [modem]
+      properties:
+        frequencyHz: { type: integer }
+        frequencyKhz: { type: number, description: Alternative to frequencyHz }
+        modem: { $ref: "#/components/schemas/ModemId" }
+        variant: { type: string }
+        modemVersion: { type: string }
+        serviceCode: { type: string, default: PUBLIC }
+        operatingHours: { type: string, default: "00-23" }
+        antenna: { type: string }
+        radioRange: { type: string }
+        gridsquare: { type: string }
+        baud: { type: string }
+        notes: { type: string }
+        compatSupportedModes: { type: string }
+    GatewayInput:
+      type: object
+      required: [callsign, gridsquare, channels]
+      properties:
+        callsign: { type: string, example: N0CALL-10 }
+        latitude: { type: number }
+        longitude: { type: number }
+        gridsquare: { type: string, example: DN16ra }
+        locationPrecision: { type: string, enum: [exact, grid6, grid4], default: exact }
+        comments: { type: string }
+        software: { type: string }
+        winlinkListed: { type: boolean }
+        emcomm: { $ref: "#/components/schemas/Emcomm" }
+        channels: { type: array, minItems: 1, maxItems: 64, items: { $ref: "#/components/schemas/ChannelInput" } }
+    WinlinkStatus:
+      type: object
+      description: Identical in shape to api.winlink.org gateway/status.json.
+      properties:
+        Gateways:
+          type: array
+          items:
+            type: object
+            properties:
+              Timestamp: { type: string, example: "/Date(1793519580000)/" }
+              Callsign: { type: string }
+              BaseCallsign: { type: string }
+              Latitude: { type: number }
+              Longitude: { type: number }
+              HoursSinceStatus: { type: integer }
+              LastStatus: { type: string, example: "Sun, 01 Nov 2026 07:53:00 UTC" }
+              Comments: { type: string }
+              RequestedMode: { type: string }
+              GatewayChannels:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    Timestamp: { type: string }
+                    SupportedModes: { type: string, example: "VARA 2750" }
+                    Mode: { type: integer, description: "Winlink code, or openRMS code >= 9000 (modes.md)" }
+                    Gridsquare: { type: string }
+                    Frequency: { type: integer, description: Hz }
+                    OperatingHours: { type: string }
+                    Baud: { type: string }
+                    RadioRange: { type: string }
+                    Antenna: { type: string }
+                    ServiceCode: { type: string }
+        ResponseStatus: { type: object }

@@ -1,0 +1,512 @@
+openapi: 3.1.0
+info:
+  title: openRMS Rigs API
+  version: 1.0.0-alpha
+  summary: Crowd-sourced radio settings profiles, per radio model and operation.
+  description: |
+    Profiles say how to set up one radio model for one operation (FT8, CW, Winlink ARDOP...).
+    Values use Hamlib names and units exactly as `rigctl --dump-caps` prints them.
+    The document format is `profile.schema.json` (see `profile.md`).
+
+    **Versioning.** Major version in the path. Within v1, changes are additive only: new
+    fields, new endpoints, new enum values (clients must ignore unknown fields and treat
+    unknown enum values as "other").
+
+    **Safety contract.** No profile, apply-plan or check ever contains anything that can key
+    the transmitter: no PTT, no tune, no send_morse or voice memory, none of the functions
+    VOX, SBKIN, FBKIN, TBURST, SEND_*, TUNER. Raw CAT is limited to an allow-list of
+    settings command families, checked on the rendered command (see profile.md). Values are
+    numbers or plain identifiers, and no command may contain whitespace. The server rejects
+    such profiles at submission (422). Functions are an allow-list, the same as rigctlWeb's
+    v1 API. Steps that change transmit behaviour carry `safety: tx`, and
+    clients ask the operator before applying them. Clients should still enforce their own
+    rules and refuse a whole plan that breaks them.
+
+    **Caching.** Every public GET sends an `ETag` and `Cache-Control`; send `If-None-Match`
+    for a 304. `GET /dump.json` returns every published profile for offline bundles.
+
+    **Privacy.** Public reads need no auth and carry nothing about the user in the URL.
+
+    **Auth** (writes only). An access token from openRMS Accounts (`Authorization: Bearer`,
+    `aud` = `https://rigs.openrms.dev`, see `../accounts/identity.md`), or an `ormsr_` API key
+    (`x-api-key`) for rig agents. Keys can submit and edit profiles; stars, reports, key
+    management and moderation need a signed-in session.
+  license: { name: AGPL-3.0-or-later (service), identifier: AGPL-3.0-or-later }
+servers:
+  - url: https://rigs.openrms.dev/api/v1
+  - url: http://localhost:8790/api/v1
+tags:
+  - { name: catalog, description: Radio models and capabilities from Hamlib }
+  - { name: profiles, description: Reading profiles and plans (public) }
+  - { name: tools, description: Stateless helpers (public) }
+  - { name: contribute, description: Submitting, starring, reporting (auth) }
+  - { name: keys, description: ormsr_ API keys (signed-in session) }
+  - { name: moderation, description: Staff only }
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer, bearerFormat: JWT, description: "openRMS Accounts access token (aud https://rigs.openrms.dev)" }
+    apiKey: { type: apiKey, in: header, name: x-api-key, description: "ormsr_ key" }
+  parameters:
+    id: { name: id, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9-]+$" } }
+    revision: { name: revision, in: query, schema: { type: integer, minimum: 1 }, description: "Default: the published revision (the latest, for the author and moderators)." }
+  headers:
+    ETag: { schema: { type: string } }
+  responses:
+    Error:
+      description: Error
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    NotModified: { description: Not modified (ETag matched) }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, examples: [not_found, unauthorized, forbidden, bad_request, invalid_profile, parse_error] }
+            message: { type: string }
+            details: {}
+    Profile:
+      $ref: "profile.schema.json"
+      description: "The document. Served at /profile.schema.json."
+    Range:
+      type: [object, "null"]
+      description: null when Hamlib reports no range (0..0).
+      properties: { min: { type: number }, max: { type: number }, step: { type: number } }
+    Control:
+      type: object
+      properties:
+        range: { $ref: "#/components/schemas/Range" }
+        choices: { type: array, items: { type: string } }
+        unit: { type: string, description: "Hamlib unit: fraction, dB, Hz, wpm, ... (levels only)" }
+    RigSummary:
+      type: object
+      required: [macro, hamlib_model, mfg, name, status, pseudo, profiles]
+      properties:
+        macro: { type: string, examples: [RIG_MODEL_IC7300] }
+        hamlib_model: { type: integer, description: "rigctld -m N in this Hamlib version" }
+        mfg: { type: string }
+        name: { type: string }
+        status: { type: string, examples: [Stable, Beta, Alpha, Untested] }
+        pseudo: { type: boolean, description: "Not a physical radio (Dummy, NET rigctl, FLRig...)" }
+        profiles: { type: integer, description: Published profiles for this rig }
+    Rig:
+      allOf:
+        - $ref: "#/components/schemas/RigSummary"
+        - type: object
+          properties:
+            backend_version: { type: string }
+            caps_available: { type: boolean }
+            hamlib: { type: string }
+            profile:
+              type: object
+              description: What a profile may use on this radio (the validator's rules), for editors.
+              properties:
+                settable_levels: { type: array, items: { type: string } }
+                checkable_levels: { type: array, items: { type: string } }
+                settable_funcs: { type: array, items: { type: string }, description: "Allow-listed, never keying" }
+                checkable_funcs: { type: array, items: { type: string } }
+                settable_parms: { type: array, items: { type: string } }
+                tx_levels: { type: array, items: { type: string } }
+                tx_funcs: { type: array, items: { type: string } }
+                refused_funcs: { type: array, items: { type: string }, description: "Hamlib can set them but profiles never include them (they can key)" }
+                cat_protocol: { enum: [ascii, civ] }
+            caps:
+              type: object
+              properties:
+                modes: { type: array, items: { type: string } }
+                agc_levels: { type: object, additionalProperties: { type: string }, description: "Hamlib AGC value → name" }
+                funcs: { type: object, properties: { get: { type: array, items: { type: string } }, set: { type: array, items: { type: string } } } }
+                levels: { type: object, properties: { get: { type: object, additionalProperties: { $ref: "#/components/schemas/Control" } }, set: { type: object, additionalProperties: { $ref: "#/components/schemas/Control" } } } }
+                parms: { type: object, properties: { get: { type: object, additionalProperties: { $ref: "#/components/schemas/Control" } }, set: { type: object, additionalProperties: { $ref: "#/components/schemas/Control" } } } }
+    Envelope:
+      type: object
+      required: [id, revision, current_revision, status, title, rig_macro, operation, author, stats, links]
+      properties:
+        id: { type: string }
+        revision: { type: integer, description: Revision of the document in this response }
+        current_revision: { type: integer }
+        published_revision: { type: [integer, "null"] }
+        status: { enum: [published, pending, hidden], description: "pending: the latest revision awaits a moderator (an earlier published revision may still be public)" }
+        title: { type: string }
+        rig_macro: { type: string }
+        operation: { type: string }
+        author: { type: object, properties: { callsign: { type: [string, "null"] } } }
+        stats:
+          type: object
+          properties:
+            stars: { type: integer }
+            worked: { type: integer, description: '"Worked for me" reports' }
+            not_worked: { type: integer }
+            forks: { type: integer, description: "Public profiles cloned from this one (single-profile responses only)" }
+            comments: { type: integer, description: "Visible comments (single-profile responses only)" }
+        forked_from:
+          type: [object, "null"]
+          description: |
+            The profile and revision this one was cloned from. Lists carry {id, revision}; a single
+            profile adds title, author, rig_macro and available (false when the parent is no longer public).
+          properties:
+            id: { type: string }
+            revision: { type: [integer, "null"] }
+            title: { type: string }
+            author: { type: object, properties: { callsign: { type: [string, "null"] } } }
+            rig_macro: { type: string }
+            available: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        links: { type: object, additionalProperties: { type: string, format: uri } }
+        document: { $ref: "#/components/schemas/Profile" }
+        viewer:
+          type: [object, "null"]
+          description: "Single-profile responses with auth only (sent Cache-Control: private): the reader's own state."
+          properties:
+            favorite: { type: boolean, description: "In the reader's private favorites" }
+            starred: { type: boolean, description: "The reader starred it (public count)" }
+            starred_at: { type: [string, "null"], format: date-time }
+            report: { type: [object, "null"], properties: { worked: { type: boolean }, revision: { type: integer } } }
+            owner: { type: boolean }
+    PlanStep:
+      type: object
+      required: [id, kind, name, safety, check_only, readable, rigctld, text]
+      properties:
+        id: { type: string }
+        kind: { enum: [mode, level, func, parm, cat, manual] }
+        name: { type: string, description: Hamlib name exactly as dump_caps prints it }
+        value: { type: [number, boolean, string] }
+        passband_hz: { type: integer }
+        expect: { type: object, description: "Acceptable values for checks: min, max, one_of, not" }
+        unit: { type: string }
+        display: { type: string }
+        safety: { enum: [rx, tx], description: "tx: ask the operator before applying" }
+        check_only: { type: boolean, description: Verify only; never set }
+        readable: { type: boolean, description: "The client can read the value back. false = can't be checked or restored automatically" }
+        rigctld:
+          type: object
+          description: "Convenience rigctld protocol lines (null when the client must build the command). Clients should run steps through their own validated command path."
+          properties: { get: { type: [string, "null"] }, set: { type: [string, "null"] } }
+        cat:
+          type: object
+          description: Raw CAT details (kind cat), with set_command filled in
+          properties:
+            protocol: { enum: [ascii, civ] }
+            read: { type: string }
+            reply: { type: string }
+            set: { type: string }
+            set_command: { type: string }
+            values: { type: object, additionalProperties: { type: string } }
+        manual: { type: object, properties: { menu: { type: string }, value: { type: string }, image: { type: string } } }
+        hamlib: { type: string }
+        firmware: { type: string }
+        text: { type: string, description: One line for a person }
+        note: { type: string }
+    Plan:
+      type: object
+      required: [rig, operation, hamlib, steps]
+      properties:
+        profile_id: { type: string }
+        revision: { type: integer }
+        rig: { type: object }
+        operation: { type: string }
+        hamlib: { type: string }
+        audio: { type: object, properties: { rx_target_dbfs: { type: number }, rx_note: { type: string }, tx_note: { type: string } } }
+        steps: { type: array, items: { $ref: "#/components/schemas/PlanStep" } }
+    CheckRequest:
+      type: object
+      required: [current]
+      properties:
+        current:
+          type: object
+          description: Values the client read from the radio, keyed by step id (null = couldn't read)
+          additionalProperties: { type: [number, boolean, string, "null"] }
+    CheckResult:
+      type: object
+      properties:
+        profile_id: { type: string }
+        revision: { type: integer }
+        summary: { type: object, properties: { ok: { type: integer }, drift: { type: integer }, unknown: { type: integer }, manual: { type: integer } } }
+        steps:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              status: { enum: [ok, drift, unknown, manual] }
+              current: { type: [number, boolean, string] }
+              target: { type: [number, boolean, string] }
+              noop: { type: boolean, description: Applying this step would change nothing }
+              text: { type: string }
+    Issue: { type: object, properties: { path: { type: string }, message: { type: string } } }
+    Comment:
+      type: object
+      properties:
+        id: { type: integer }
+        parent_id: { type: [integer, "null"] }
+        revision: { type: integer, description: The published revision the commenter was looking at }
+        author: { type: object, properties: { callsign: { type: [string, "null"] } } }
+        body: { type: [string, "null"], description: Plain text }
+        created_at: { type: string, format: date-time }
+        edited_at: { type: [string, "null"], format: date-time }
+        deleted: { type: boolean }
+        hidden: { type: boolean }
+        mine: { type: boolean }
+        replies: { type: array, items: { $ref: "#/components/schemas/Comment" } }
+paths:
+  /operations:
+    get:
+      tags: [catalog]
+      summary: Operations a profile can target
+      responses: { "200": { description: OK, content: { application/json: { schema: { type: object, properties: { operations: { type: array, items: { type: string } } } } } } } }
+  /hamlib:
+    get:
+      tags: [catalog]
+      summary: Hamlib versions with a catalog
+      responses: { "200": { description: OK } }
+  /rigs:
+    get:
+      tags: [catalog]
+      summary: Radio models (Hamlib catalog)
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: mfg, in: query, schema: { type: string } }
+        - { name: include_pseudo, in: query, schema: { type: boolean, default: false } }
+        - { name: hamlib, in: query, schema: { type: string }, description: Catalog version (default latest) }
+      responses:
+        "200": { description: OK, headers: { ETag: { $ref: "#/components/headers/ETag" } }, content: { application/json: { schema: { type: object, properties: { hamlib: { type: string }, count: { type: integer }, rigs: { type: array, items: { $ref: "#/components/schemas/RigSummary" } } } } } } }
+        "304": { $ref: "#/components/responses/NotModified" }
+  /rigs/{macro}:
+    get:
+      tags: [catalog]
+      summary: One radio model with its capabilities and units
+      parameters:
+        - { name: macro, in: path, required: true, schema: { type: string } }
+        - { name: hamlib, in: query, schema: { type: string } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Rig" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+  /profiles:
+    get:
+      tags: [profiles]
+      summary: Search published profiles
+      parameters:
+        - { name: rig, in: query, schema: { type: string }, description: Hamlib macro }
+        - { name: operation, in: query, schema: { type: string } }
+        - { name: q, in: query, schema: { type: string } }
+        - { name: sort, in: query, schema: { enum: [best, stars, recent], default: best }, description: "best: worked minus not-worked, then stars" }
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { total: { type: integer }, limit: { type: integer }, offset: { type: integer }, profiles: { type: array, items: { $ref: "#/components/schemas/Envelope" } } } } } } }
+    post:
+      tags: [contribute]
+      summary: Submit a profile (JSON or YAML body)
+      description: |
+        Published at once for verified callsigns and staff. Profiles with raw CAT steps, and profiles from anyone else, are pending until a moderator approves.
+        To clone, pass `forked_from` (and optionally `forked_revision`; default the parent's published revision). The parent must be visible to the author.
+      security: [{ bearer: [] }, { apiKey: [] }]
+      parameters:
+        - { name: forked_from, in: query, schema: { type: string }, description: Profile id this one was cloned from }
+        - { name: forked_revision, in: query, schema: { type: integer, minimum: 1 } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/Profile" } }, application/yaml: { schema: { type: string } } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Envelope" } } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /dump.json:
+    get:
+      tags: [profiles]
+      summary: Every published profile with its document (offline bundles)
+      responses: { "200": { description: OK, content: { application/json: { schema: { type: object, properties: { generated_at: { type: string }, license: { type: string }, profiles: { type: array, items: { $ref: "#/components/schemas/Envelope" } } } } } } } }
+  /profiles/{id}:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get:
+      tags: [profiles]
+      summary: A profile with its document
+      parameters: [{ $ref: "#/components/parameters/revision" }]
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Envelope" } } } }
+        "304": { $ref: "#/components/responses/NotModified" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [contribute]
+      summary: New revision (author or moderator)
+      description: The rig can't change. An unreviewed edit leaves the previous published revision public.
+      security: [{ bearer: [] }, { apiKey: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/Profile" } }, application/yaml: { schema: { type: string } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Envelope" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /profiles/{id}.json:
+    get:
+      tags: [profiles]
+      summary: The bare document as JSON
+      parameters: [{ $ref: "#/components/parameters/id" }, { $ref: "#/components/parameters/revision" }]
+      responses: { "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Profile" } } } } }
+  /profiles/{id}.yaml:
+    get:
+      tags: [profiles]
+      summary: The bare document as YAML
+      parameters: [{ $ref: "#/components/parameters/id" }, { $ref: "#/components/parameters/revision" }]
+      responses: { "200": { description: OK, content: { application/yaml: { schema: { type: string } } } } }
+  /profiles/{id}/revisions:
+    get:
+      tags: [profiles]
+      summary: Revision history
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      responses: { "200": { description: OK } }
+  /profiles/{id}/forks:
+    get:
+      tags: [profiles]
+      summary: Public profiles cloned from this one
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      responses: { "200": { description: OK, content: { application/json: { schema: { type: object, properties: { id: { type: string }, forks: { type: array, items: { $ref: "#/components/schemas/Envelope" } } } } } } } }
+  /profiles/{id}/apply-plan:
+    get:
+      tags: [profiles]
+      summary: Structured steps for a client to check and apply
+      description: |
+        Recommended client flow: read every readable step's current value, POST them to
+        `/check`, show the diff, ask before `safety: tx` steps, snapshot, apply, offer restore.
+        Steps with `readable: false` can't be restored automatically; say so in the diff.
+      parameters: [{ $ref: "#/components/parameters/id" }, { $ref: "#/components/parameters/revision" }]
+      responses: { "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Plan" } } } } }
+  /profiles/{id}/check:
+    post:
+      tags: [profiles]
+      summary: Dry run against values read from the radio (nothing is stored)
+      parameters: [{ $ref: "#/components/parameters/id" }, { $ref: "#/components/parameters/revision" }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/CheckRequest" } } } }
+      responses: { "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/CheckResult" } } } } }
+  /profiles/{id}/star:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    put: { tags: [contribute], summary: Star (public recommendation; counted in stats.stars), security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    delete: { tags: [contribute], summary: Unstar, security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /profiles/{id}/favorite:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    put: { tags: [contribute], summary: Save to my private favorites, security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    delete: { tags: [contribute], summary: Remove from my favorites, security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+  /profiles/{id}/comments:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get:
+      tags: [profiles]
+      summary: Comments, oldest first, with one level of replies
+      description: |
+        Bodies are plain text; clients must render them as text, never HTML. Deleted or hidden comments
+        that have replies stay as placeholders (body and author null) so threads read; moderators see them in full.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+                  comments: { type: array, items: { $ref: "#/components/schemas/Comment" } }
+    post:
+      tags: [contribute]
+      summary: Comment, or reply to a top-level comment
+      description: Signed-in session only. Limits per account are 5 per minute and 100 per day (429 when exceeded).
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [body], properties: { body: { type: string, minLength: 1, maxLength: 4000 }, parent_id: { type: integer } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Comment" } } } }
+        "429": { $ref: "#/components/responses/Error" }
+  /comments/{cid}:
+    parameters: [{ name: cid, in: path, required: true, schema: { type: integer } }]
+    patch:
+      tags: [contribute]
+      summary: Edit my comment
+      security: [{ bearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [body], properties: { body: { type: string } } } } } }
+      responses: { "200": { description: OK } }
+    delete: { tags: [contribute], summary: Delete (author or moderator; soft delete), security: [{ bearer: [] }], responses: { "204": { description: Deleted } } }
+  /admin/comments/{cid}/hide:
+    post:
+      tags: [moderation]
+      summary: Hide or unhide a comment
+      security: [{ bearer: [] }]
+      parameters: [{ name: cid, in: path, required: true, schema: { type: integer } }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { hidden: { type: boolean, default: true }, reason: { type: string } } } } } }
+      responses: { "200": { description: OK } }
+  /profiles/{id}/reports:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get: { tags: [profiles], summary: '"Worked for me" reports', responses: { "200": { description: OK } } }
+    post:
+      tags: [contribute]
+      summary: Report whether it worked (one per account per revision; re-posting replaces it)
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [worked]
+              properties: { worked: { type: boolean }, revision: { type: integer }, firmware: { type: string }, hamlib: { type: string }, interface: { type: string }, note: { type: string } }
+      responses: { "201": { description: Created } }
+  /validate:
+    post:
+      tags: [tools]
+      summary: Validate a JSON or YAML profile without saving
+      requestBody: { required: true, content: { application/yaml: { schema: { type: string } }, application/json: { schema: { $ref: "#/components/schemas/Profile" } } } }
+      responses:
+        "200": { description: Valid, content: { application/json: { schema: { type: object, properties: { ok: { const: true }, errors: { type: array, items: { $ref: "#/components/schemas/Issue" } }, warnings: { type: array, items: { $ref: "#/components/schemas/Issue" } }, normalized: { $ref: "#/components/schemas/Profile" } } } } } }
+        "422": { description: Invalid }
+  /convert:
+    post:
+      tags: [tools]
+      summary: Convert a document between YAML and JSON
+      parameters: [{ name: to, in: query, schema: { enum: [json, yaml], default: json } }]
+      requestBody: { required: true, content: { application/yaml: { schema: { type: string } }, application/json: { schema: { type: object } } } }
+      responses: { "200": { description: OK } }
+  /me:
+    get: { tags: [contribute], summary: Who am I, security: [{ bearer: [] }, { apiKey: [] }], responses: { "200": { description: OK } } }
+  /me/favorites:
+    get:
+      tags: [contribute]
+      summary: My favorites, newest first
+      description: Private bookmarks, separate from public stars. Only the owner sees them and there is no public count. Signed-in apps (device flow) can list them; API keys can't.
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: rig, in: query, schema: { type: string } }
+        - { name: operation, in: query, schema: { type: string } }
+      responses: { "200": { description: OK, content: { application/json: { schema: { type: object, properties: { total: { type: integer }, favorites: { type: array, items: { allOf: [{ $ref: "#/components/schemas/Envelope" }, { type: object, properties: { saved_at: { type: string, format: date-time } } }] } } } } } } } }
+  /me/profiles:
+    get: { tags: [contribute], summary: My profiles (any status), security: [{ bearer: [] }, { apiKey: [] }], responses: { "200": { description: OK } } }
+  /me/keys:
+    get: { tags: [keys], summary: List my keys, security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    post:
+      tags: [keys]
+      summary: Mint an ormsr_ key (shown once)
+      security: [{ bearer: [] }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { name: { type: string } } } } } }
+      responses: { "201": { description: Created } }
+  /me/keys/{id}:
+    delete:
+      tags: [keys]
+      summary: Revoke a key
+      security: [{ bearer: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "204": { description: Revoked } }
+  /admin/profiles:
+    get:
+      tags: [moderation]
+      summary: Review queue
+      security: [{ bearer: [] }]
+      parameters: [{ name: status, in: query, schema: { enum: [pending, published, hidden], default: pending } }]
+      responses: { "200": { description: OK } }
+  /admin/profiles/{id}/status:
+    post:
+      tags: [moderation]
+      summary: Publish (the latest revision), send back to pending, or hide
+      security: [{ bearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [status], properties: { status: { enum: [published, pending, hidden] }, reason: { type: string } } } } } }
+      responses: { "200": { description: OK } }

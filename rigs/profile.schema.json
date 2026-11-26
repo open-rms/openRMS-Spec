@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rigs.openrms.dev/schema/profile/v1.json",
+  "title": "openRMS Rigs settings profile, v1",
+  "description": "Settings for one radio model and one operation. YAML and JSON are two serializations of the same document. Values use Hamlib names and Hamlib units exactly as `rigctl --dump-caps` prints them (RFPOWER is a 0..1 fraction, not watts). See profile.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "title", "rig", "operation", "connection", "hamlib", "steps"],
+  "properties": {
+    "schema": { "const": "openrms-rigs/profile/v1" },
+    "title": { "type": "string", "minLength": 3, "maxLength": 120 },
+    "summary": { "type": "string", "maxLength": 500 },
+    "rig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["macro", "hamlib_model", "mfg", "name"],
+      "properties": {
+        "macro": { "type": "string", "pattern": "^RIG_MODEL_[A-Z0-9_]+$", "description": "Stable key across Hamlib releases." },
+        "hamlib_model": { "type": "integer", "minimum": 1, "description": "rigctld -m N, as of the tested Hamlib version." },
+        "mfg": { "type": "string", "description": "Manufacturer as dump_caps prints it (\"Mfg name\")." },
+        "name": { "type": "string", "description": "Model as dump_caps prints it (\"Model name\")." },
+        "firmware": { "$ref": "#/$defs/versionRange" }
+      }
+    },
+    "operation": { "$ref": "#/$defs/operation" },
+    "connection": { "enum": ["usb", "lan", "serial", "bluetooth", "other"] },
+    "interface": { "type": "string", "maxLength": 120, "description": "External audio/CAT interface, if any (e.g. \"built-in USB codec\", \"SignaLink USB\")." },
+    "hamlib": { "$ref": "#/$defs/versionRange", "description": "Hamlib versions this profile was tested with." },
+    "audio": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Targets a client can measure when a level can't be set over CAT.",
+      "properties": {
+        "rx_target_dbfs": { "type": "number", "maximum": 0, "description": "Receive audio noise floor target at the computer, in dBFS (e.g. -25)." },
+        "rx_note": { "type": "string", "maxLength": 500 },
+        "tx_note": { "type": "string", "maxLength": 500, "description": "E.g. \"ALC should stay at zero\"." }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": { "$ref": "#/$defs/step" }
+    },
+    "software": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["app", "setting", "value"],
+        "properties": {
+          "app": { "type": "string", "maxLength": 60, "description": "e.g. wsjt-x, fldigi, pat, ardopcf, pipewire" },
+          "setting": { "type": "string", "maxLength": 200 },
+          "value": { "type": "string", "maxLength": 200 },
+          "note": { "type": "string", "maxLength": 500 }
+        }
+      }
+    },
+    "notes": { "type": "string", "maxLength": 20000, "description": "Markdown." },
+    "tags": { "type": "array", "maxItems": 10, "items": { "type": "string", "pattern": "^[a-z0-9-]{1,30}$" } }
+  },
+  "$defs": {
+    "operation": {
+      "enum": ["ssb", "am", "fm", "cw", "rtty", "psk", "ft8", "ft4", "js8", "olivia", "sstv", "packet", "winlink-ardop", "winlink-vara", "winlink-mercury", "winlink-packet", "digital-other", "other"]
+    },
+    "versionRange": {
+      "type": "string",
+      "pattern": "^(\\s*(>=|<=|>|<|=)?\\s*\\d+(\\.\\d+){0,2})+\\s*$",
+      "description": "Space-separated comparators, all must hold: \">=4.6 <4.8\", \"=1.42\", \">=1.40\"."
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "name"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,40}$", "description": "Unique within the profile; check results refer to it." },
+        "kind": { "enum": ["mode", "level", "func", "parm", "cat", "manual"] },
+        "name": { "type": "string", "maxLength": 80, "description": "Hamlib name for level/func/parm (exactly as dump_caps prints it), \"MODE\" for mode, a short label for cat/manual." },
+        "value": { "type": ["number", "boolean", "string"], "description": "Target value in Hamlib units. mode: a Hamlib mode name (PKTUSB). func: true/false. cat: the raw value inserted into cat.set." },
+        "passband_hz": { "type": "integer", "minimum": 0, "description": "mode only. 0 = radio default." },
+        "expect": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Acceptable values for a check. Absent means the target value exactly (within one Hamlib step for levels).",
+          "properties": {
+            "min": { "type": "number" },
+            "max": { "type": "number" },
+            "one_of": { "type": "array", "items": { "type": ["number", "boolean", "string"] } },
+            "not": { "type": "array", "items": { "type": ["number", "boolean", "string"] }, "description": "Values that are a problem, e.g. AGC OFF." }
+          }
+        },
+        "check_only": { "type": "boolean", "default": false, "description": "Verify and warn, but never set (e.g. 'AGC must not be OFF')." },
+        "safety": { "enum": ["rx", "tx"], "default": "rx", "description": "tx = changes transmit behaviour (power, mic gain, mod source); clients ask the operator first. The server raises this to tx when it knows better. Steps that can key the transmitter are rejected outright." },
+        "unit": { "type": "string", "maxLength": 20, "description": "Informational; Hamlib's unit for the name (fraction, dB, Hz, wpm, enum...)." },
+        "display": { "type": "string", "maxLength": 60, "description": "Human reading of the value, e.g. \"~35 W\"." },
+        "hamlib": { "$ref": "#/$defs/versionRange", "description": "Hamlib versions this step needs, if narrower than the profile." },
+        "firmware": { "$ref": "#/$defs/versionRange", "description": "Firmware or menu-table versions this step applies to." },
+        "cat": { "$ref": "#/$defs/cat" },
+        "manual": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["menu", "value"],
+          "properties": {
+            "menu": { "type": "string", "maxLength": 300, "description": "Menu path on the radio, e.g. \"MENU > SET > Connectors > USB MOD Level\"." },
+            "value": { "type": "string", "maxLength": 100 },
+            "image": { "type": "string", "format": "uri" }
+          }
+        },
+        "note": { "type": "string", "maxLength": 1000 }
+      },
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "cat" } } }, "then": { "required": ["cat"] } },
+        { "if": { "properties": { "kind": { "const": "manual" } } }, "then": { "required": ["manual"] } },
+        { "if": { "properties": { "kind": { "enum": ["mode", "level", "func", "parm"] } } }, "then": { "anyOf": [{ "required": ["value"] }, { "required": ["expect"] }] } }
+      ]
+    },
+    "cat": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Raw CAT through rigctld's send_cmd, for menu items Hamlib lacks. Limited to an allow-list of settings command families (profile.md); checked on the rendered command.",
+      "required": ["protocol"],
+      "properties": {
+        "protocol": { "enum": ["ascii", "civ"], "description": "ascii: Kenwood/Yaesu/Elecraft style text ending in ';'. civ: Icom CI-V body as hex bytes, without preamble, addresses or FD (the client frames it for its radio address)." },
+        "read": { "type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9;]+$", "description": "Command that reads the current value, e.g. \"EX010413;\"." },
+        "reply": { "type": "string", "maxLength": 200, "description": "Regex for the reply; capture group 1 is the value. e.g. \"^EX010413(\\\\d{3});$\"." },
+        "set": { "type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9;{}:]+$", "description": "Template; {value} or {value:03} (zero-padded width) is replaced. e.g. \"EX010413{value:03};\"." },
+        "values": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Meaning of raw values, e.g. {\"0\": \"OFF\", \"1\": \"FAST\"}." }
+      }
+    }
+  }
+}

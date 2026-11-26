@@ -1,0 +1,79 @@
+schema: openrms-rigs/profile/v1
+title: FT-DX10 ARDOP for Winlink (Pat + ardopcf)
+summary: Data mode over the USB codec with AGC on, which fixed clipped receive audio for ardopcf. Partly verified on air with hamstack (2026-11-25); no gateway connect completed yet.
+rig:
+  macro: RIG_MODEL_FTDX10
+  hamlib_model: 1042
+  mfg: Yaesu
+  name: FTDX-10
+operation: winlink-ardop
+connection: usb
+interface: built-in USB codec
+hamlib: ">=4.6.2 <4.8"
+audio:
+  rx_target_dbfs: -25
+  rx_note: Noise around -25 dBFS with no clipping on strong stations.
+steps:
+  - id: mode
+    kind: mode
+    name: MODE
+    value: PKTUSB
+    passband_hz: 3000
+    note: DATA-U. CAT reply MD0C;
+  - id: agc
+    kind: cat
+    name: AGC
+    value: 4
+    expect:
+      not: [0]
+    cat:
+      protocol: ascii
+      read: "GT0;"
+      reply: "^GT0(\\d);$"
+      set: "GT0{value};"
+      values: { "0": "OFF", "1": "FAST", "2": "MID", "3": "SLOW", "4": "AUTO", "5": "AUTO-MID", "6": "AUTO-SLOW" }
+    note: Verified. GT00 (OFF) clipped the USB receive audio (noise -8.5 to -12 dBFS RMS, peaks at full scale). GT04 read back GT05 (AUTO-MID) and gave -24.7 dBFS RMS, peaks -12.2 dBFS.
+  - id: data-out-level
+    kind: cat
+    name: DATA OUT LEVEL
+    check_only: true
+    cat:
+      protocol: ascii
+      read: "EX010413;"
+      reply: "^EX010413(\\d{3});$"
+      set: "EX010413{value:03};"
+    note: Receive audio to the computer. CAT codes verified (reads EX010413050;), but the effect is not; stepping 50 to 15 with AGC OFF changed USB receive level by under 0.5 dB. Hamlib's USB_AF returns RPRT -1 on this radio, so raw CAT.
+  - id: data-mod-source
+    kind: cat
+    name: DATA MOD SOURCE
+    check_only: true
+    expect: { one_of: [1] }
+    safety: tx
+    cat:
+      protocol: ascii
+      read: "EX010415;"
+      reply: "^EX010415(\\d);$"
+      set: "EX010415{value};"
+      values: { "0": "MIC", "1": "REAR" }
+    note: Observed radio value during testing (read, not changed); not shown to be required.
+  - id: data-shift
+    kind: cat
+    name: DATA SHIFT
+    check_only: true
+    cat:
+      protocol: ascii
+      read: "EX010408;"
+      reply: "^EX010408(\\d{4});$"
+      set: "EX010408{value:04};"
+    note: 0000-3000 Hz. Observed 1500 (radio's existing value); not tested as a requirement.
+software:
+  - app: pat
+    setting: "ardop.addr"
+    value: "ardopcf's command port (8515 stand-alone; under hamstack the rig's ARQ port, which hamstack's pat sync writes)"
+  - app: ardopcf
+    setting: "audio devices"
+    value: "USB Audio CODEC (the radio) for capture and playback"
+notes: |
+  Yaesu menu numbers move between models and firmware. These EX01 04xx numbers are for the FT-DX10.
+  Not yet proven end to end: no gateway connection completed in testing (likely propagation).
+tags: [winlink, emcomm, partly-verified]

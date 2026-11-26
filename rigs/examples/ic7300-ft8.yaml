@@ -1,0 +1,104 @@
+schema: openrms-rigs/profile/v1
+title: IC-7300 FT8 over the built-in USB codec
+summary: Starter settings for WSJT-X with a single USB cable. Clean audio, no processing, ALC at zero.
+rig:
+  macro: RIG_MODEL_IC7300
+  hamlib_model: 3073
+  mfg: Icom
+  name: IC-7300
+  firmware: ">=1.40"
+operation: ft8
+connection: usb
+interface: built-in USB codec
+hamlib: ">=4.6"
+audio:
+  rx_target_dbfs: -25
+  rx_note: WSJT-X's receive meter should sit around 30 dB on a quiet band.
+  tx_note: Raise WSJT-X's Pwr slider until power output stops rising, then back off; ALC stays at zero.
+steps:
+  - id: mode
+    kind: mode
+    name: MODE
+    value: PKTUSB
+    passband_hz: 3000
+    note: USB-D, wide filter so the whole 0-3000 Hz FT8 window is heard.
+  - id: power
+    kind: level
+    name: RFPOWER
+    value: 0.35
+    unit: fraction
+    display: "~35 W"
+    safety: tx
+    note: FT8 is 100% duty cycle for 13 s; keep well under full power.
+  - id: compressor-off
+    kind: func
+    name: COMP
+    value: false
+    safety: tx
+  - id: nb-off
+    kind: func
+    name: NB
+    value: false
+    note: The noise blanker distorts strong FT8 signals.
+  - id: nr-off
+    kind: func
+    name: NR
+    value: false
+  - id: agc-not-off
+    kind: level
+    name: AGC
+    check_only: true
+    expect:
+      not: [0]
+    note: AGC OFF clips the USB receive audio on strong signals. Hamlib reports 0 for OFF on this radio.
+  - id: usb-af
+    kind: level
+    name: USB_AF
+    value: 0.4
+    unit: fraction
+    display: "40%"
+    expect: { min: 0.3, max: 0.6 }
+  - id: data-mod
+    kind: manual
+    name: DATA MOD source
+    safety: tx
+    manual:
+      menu: "MENU > SET > Connectors > MOD Input > DATA MOD"
+      value: USB
+  - id: usb-mod-level
+    kind: manual
+    name: USB MOD level
+    safety: tx
+    manual:
+      menu: "MENU > SET > Connectors > USB MOD Level"
+      value: "50%"
+  - id: usb-send-off
+    kind: manual
+    name: USB SEND / keying off
+    manual:
+      menu: "MENU > SET > Connectors > USB SEND and USB Keying (CW/RTTY)"
+      value: OFF
+    note: PTT comes over CAT; RTS/DTR keying can key the radio when the port opens.
+  - id: civ-echo-off
+    kind: manual
+    name: CI-V USB Echo Back
+    manual:
+      menu: "MENU > SET > Connectors > CI-V > CI-V USB Echo Back"
+      value: OFF
+software:
+  - app: wsjt-x
+    setting: "Radio > Rig"
+    value: Icom IC-7300 (or Hamlib NET rigctl when sharing rigctld)
+  - app: wsjt-x
+    setting: "Radio > Mode"
+    value: Data/Pkt
+  - app: wsjt-x
+    setting: "Radio > PTT method"
+    value: CAT
+  - app: wsjt-x
+    setting: "Audio > Input / Output"
+    value: "USB Audio CODEC (the radio)"
+notes: |
+  Typical starting values, not yet confirmed by an on-air report. Menu paths are from the IC-7300 manual layout; check them on your firmware.
+  Check ALC on transmit and the receive level in WSJT-X after applying.
+tags: [starter, single-cable, unverified]
