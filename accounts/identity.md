@@ -246,9 +246,11 @@ read-only, and are dropped in a later migration.
 
 **Watch:** the watcher app links with the device flow, then mints a renewable Atlas key
 (`watch:ingest`) and binds it to its watcher at Atlas: `POST /api/v1/watch/link` with the new key records
-`jti → watcherId` (Atlas's choice; keys carry no watcher claim). Atlas drops the binding when
-the key is revoked. A renewed key that arrives before the revocation does rebinds at once
-through its `replaces` claim, if the old `jti` is bound to a watcher of the same `sub`. It renews the key before expiry, so a watcher needs neither Accounts' uptime nor a
+`jti → watcherId` (Atlas's choice; keys carry no watcher claim). When the key is revoked,
+Atlas stops using the binding but keeps it as a tombstone until the key's `exp` + 30 days, so a
+renewed key presenting `replaces: <old jti>` can still rebind, if the old `jti` is bound to a
+watcher of the same `sub`. A renewed key that arrives before the revocation does rebinds the
+same way. It renews the key before expiry, so a watcher needs neither Accounts' uptime nor a
 refresh token to keep uploading.
 
 ## 6. Accounts API for services (client credentials)
@@ -330,13 +332,18 @@ Example: Atlas deletes a club's own listings and releases its Winlink claims on
 
 `@openrms/service-auth` (TypeScript, in openRMS-Accounts) exports
 `verifyAccessToken(token, {audience, issuers?}) → claims`. It returns the §4 claims (`sub`,
-`callsign`, `callsign_verified`, `callsign_verified_method`, `clubs`, `role`, …) or throws, and
-caches the JWKS. Atlas and Rigs use it. `verifyAccessToken` refuses API keys.
+`callsign`, `callsign_verified`, `callsign_verified_method`, `clubs`, `role`, …) or throws.
+It caches the JWKS (refresh every 10 min, at once for an unknown `kid` at most every 30 s) and
+keeps the last good set when a refresh fails, so an unreachable Accounts doesn't stop
+verification; with `jwksCacheFile` (or `OPENRMS_JWKS_CACHE_FILE`) that set also survives a
+restart. Services should set one. Atlas and Rigs use it. `verifyAccessToken` refuses API keys.
 `verifyBearer(token, {audience, isRevoked})` accepts either and returns
 `{kind: "access" | "key", claims}`; `isRevoked(jti)` is the service's denylist lookup.
 `RevocationSync` pulls `/api/v1/keys/revoked` and ingests `key.revoked`; on both paths it hands
 the service each newly revoked `{jti, sub, exp, revoked_at}` to store (and, for example, to drop
-rows bound to that key), and asks the service for its last sync time. For Rust devices, `openrms-auth` (openRMS-Libs) does the device flow.
+rows bound to that key). It keeps its own pull cursor, advanced only by rows the pull returned
+(never by webhook rows, which could skip a revocation the pull hasn't seen yet); pass
+`cursor: {load, save}` to keep it across restarts. For Rust devices, `openrms-auth` (openRMS-Libs) does the device flow.
 
 ## 10. Security notes
 
