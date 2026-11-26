@@ -25,6 +25,12 @@ info:
     **Caching.** Every public GET sends an `ETag` and `Cache-Control`; send `If-None-Match`
     for a 304. `GET /dump.json` returns every published profile for offline bundles.
 
+    **Profile pages.** Link people to `{site}/p/{id}` (https://rigs.openrms.dev/p/{id}). It is
+    the canonical human page for a profile: the server sends the profile's title and summary in
+    `<title>`, the description and Open Graph tags, plus `<link rel="canonical">` and a
+    `rel="alternate"` JSON link to `/api/v1/profiles/{id}`. Ids that aren't public get a 404.
+    The id is stable across revisions; the page shows the published revision.
+
     **Privacy.** Public reads need no auth and carry nothing about the user in the URL.
 
     **Auth** (writes only). An access token from openRMS Accounts (`Authorization: Bearer`,

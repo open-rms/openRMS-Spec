@@ -167,6 +167,10 @@ stays a plain profile.
    restore automatically".
 4. Snapshot the current values, apply, and offer to restore.
 
+To send a person to a profile, link `https://rigs.openrms.dev/p/{id}` (the deployment's site
+URL + `/p/{id}`). That URL is canonical and stays the same across revisions. Unknown or
+non-public ids return 404, and the page's `<title>` is the profile title.
+
 For offline use (field, EmComm), bundle `GET /dump.json` and use ETags to refresh it. Each
 entry carries its `plan` (the same as the apply-plan, with `readable`, `safety`, `tolerance` and
 `menu`), so an offline client needs no catalog.
