@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: openRMS Rigs API
-  version: 1.1.0-alpha
+  version: 1.2.0-alpha
   summary: Crowd-sourced radio settings profiles, per radio model and operation.
   description: |
     Profiles say how to set up one radio model for one operation (FT8, CW, Winlink ARDOP...).
@@ -34,9 +34,13 @@ info:
     **Privacy.** Public reads need no auth and carry nothing about the user in the URL.
 
     **Auth** (writes only). An access token from openRMS Accounts (`Authorization: Bearer`,
-    `aud` = `https://rigs.openrms.dev`, see `../accounts/identity.md`), or an `ormsr_` API key
-    (`x-api-key`) for rig agents. Keys can submit and edit profiles; stars, reports, key
-    management and moderation need a signed-in session.
+    `aud` = `https://rigs.openrms.dev`, see `../accounts/identity.md`), or an openRMS API key
+    (`Authorization: Bearer ormk_…`, identity.md §5) made at https://auth.openrms.dev/keys for
+    Rigs. A key works only on routes its scopes cover (`403 insufficient_scope` otherwise):
+    `profiles:write`, `profiles:read-private`, `favorites`, `reports:write`, `comments:write`,
+    published at `/.well-known/oauth-protected-resource` (RFC 9728). Stars and every moderation
+    route refuse keys whatever their scopes. Rigs' own `ormsr_` keys are retired (401 with a
+    pointer to Accounts).
   license: { name: AGPL-3.0-or-later (service), identifier: AGPL-3.0-or-later }
 servers:
   - url: https://rigs.openrms.dev/api/v1
@@ -46,12 +50,12 @@ tags:
   - { name: profiles, description: Reading profiles and plans (public) }
   - { name: tools, description: Stateless helpers (public) }
   - { name: contribute, description: Submitting, starring, reporting (auth) }
-  - { name: keys, description: ormsr_ API keys (signed-in session) }
+  - { name: keys, description: Your Rigs API keys (made and revoked at openRMS Accounts) }
   - { name: moderation, description: Staff only }
 components:
   securitySchemes:
     bearer: { type: http, scheme: bearer, bearerFormat: JWT, description: "openRMS Accounts access token (aud https://rigs.openrms.dev)" }
-    apiKey: { type: apiKey, in: header, name: x-api-key, description: "ormsr_ key" }
+    key: { type: http, scheme: bearer, bearerFormat: "ormk_ JWT", description: "openRMS API key for Rigs (identity.md §5); OpenAPI scopes here are the key's scopes" }
   parameters:
     id: { name: id, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9-]+$" } }
     revision: { name: revision, in: query, schema: { type: integer, minimum: 1 }, description: "Default: the published revision (the latest, for the author and moderators)." }
@@ -315,7 +319,7 @@ paths:
       description: |
         Published at once for verified callsigns and staff. Profiles with raw CAT steps, and profiles from anyone else, are pending until a moderator approves.
         To clone, pass `forked_from` (and optionally `forked_revision`; default the parent's published revision). The parent must be visible to the author.
-      security: [{ bearer: [] }, { apiKey: [] }]
+      security: [{ bearer: [] }, { key: ["profiles:write"] }]
       parameters:
         - { name: forked_from, in: query, schema: { type: string }, description: Profile id this one was cloned from }
         - { name: forked_revision, in: query, schema: { type: integer, minimum: 1 } }
@@ -367,7 +371,7 @@ paths:
       tags: [contribute]
       summary: New revision (author or moderator)
       description: The rig can't change. An unreviewed edit leaves the previous published revision public.
-      security: [{ bearer: [] }, { apiKey: [] }]
+      security: [{ bearer: [] }, { key: ["profiles:write"] }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/Profile" } }, application/yaml: { schema: { type: string } } } }
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Envelope" } } } }
@@ -423,8 +427,8 @@ paths:
     delete: { tags: [contribute], summary: Unstar, security: [{ bearer: [] }], responses: { "200": { description: OK } } }
   /profiles/{id}/favorite:
     parameters: [{ $ref: "#/components/parameters/id" }]
-    put: { tags: [contribute], summary: Save to my private favorites, security: [{ bearer: [] }], responses: { "200": { description: OK } } }
-    delete: { tags: [contribute], summary: Remove from my favorites, security: [{ bearer: [] }], responses: { "200": { description: OK } } }
+    put: { tags: [contribute], summary: Save to my private favorites, security: [{ bearer: [] }, { key: [favorites] }], responses: { "200": { description: OK } } }
+    delete: { tags: [contribute], summary: Remove from my favorites, security: [{ bearer: [] }, { key: [favorites] }], responses: { "200": { description: OK } } }
   /profiles/{id}/comments:
     parameters: [{ $ref: "#/components/parameters/id" }]
     get:
@@ -447,7 +451,7 @@ paths:
       tags: [contribute]
       summary: Comment, or reply to a top-level comment
       description: Signed-in session only. Limits per account are 5 per minute and 100 per day (429 when exceeded).
-      security: [{ bearer: [] }]
+      security: [{ bearer: [] }, { key: ["comments:write"] }]
       requestBody:
         required: true
         content:
@@ -461,10 +465,10 @@ paths:
     patch:
       tags: [contribute]
       summary: Edit my comment
-      security: [{ bearer: [] }]
+      security: [{ bearer: [] }, { key: ["comments:write"] }]
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [body], properties: { body: { type: string } } } } } }
       responses: { "200": { description: OK } }
-    delete: { tags: [contribute], summary: Delete (author or moderator; soft delete), security: [{ bearer: [] }], responses: { "204": { description: Deleted } } }
+    delete: { tags: [contribute], summary: Delete (author or moderator; soft delete), security: [{ bearer: [] }, { key: ["comments:write"] }], responses: { "204": { description: Deleted } } }
   /admin/comments/{cid}/hide:
     post:
       tags: [moderation]
@@ -479,7 +483,7 @@ paths:
     post:
       tags: [contribute]
       summary: Report whether it worked (one per account per revision; re-posting replaces it)
-      security: [{ bearer: [] }]
+      security: [{ bearer: [] }, { key: ["reports:write"] }]
       requestBody:
         required: true
         content:
@@ -505,34 +509,29 @@ paths:
       requestBody: { required: true, content: { application/yaml: { schema: { type: string } }, application/json: { schema: { type: object } } } }
       responses: { "200": { description: OK } }
   /me:
-    get: { tags: [contribute], summary: Who am I, security: [{ bearer: [] }, { apiKey: [] }], responses: { "200": { description: OK } } }
+    get: { tags: [contribute], summary: Who am I, security: [{ bearer: [] }, { key: [] }], responses: { "200": { description: OK } } }
   /me/favorites:
     get:
       tags: [contribute]
       summary: My favorites, newest first
-      description: Private bookmarks, separate from public stars. Only the owner sees them and there is no public count. Signed-in apps (device flow) can list them; API keys can't.
-      security: [{ bearer: [] }]
+      description: Private bookmarks, separate from public stars. Only the owner sees them and there is no public count. Signed-in apps (device flow) and keys with the `favorites` scope can list them.
+      security: [{ bearer: [] }, { key: [favorites] }]
       parameters:
         - { name: rig, in: query, schema: { type: string } }
         - { name: operation, in: query, schema: { type: string } }
       responses: { "200": { description: OK, content: { application/json: { schema: { type: object, properties: { total: { type: integer }, favorites: { type: array, items: { allOf: [{ $ref: "#/components/schemas/Envelope" }, { type: object, properties: { saved_at: { type: string, format: date-time } } }] } } } } } } } }
   /me/profiles:
-    get: { tags: [contribute], summary: My profiles (any status), security: [{ bearer: [] }, { apiKey: [] }], responses: { "200": { description: OK } } }
+    get: { tags: [contribute], summary: My profiles (any status), security: [{ bearer: [] }, { key: ["profiles:read-private"] }], responses: { "200": { description: OK } } }
   /me/keys:
-    get: { tags: [keys], summary: List my keys, security: [{ bearer: [] }], responses: { "200": { description: OK } } }
-    post:
+    get:
       tags: [keys]
-      summary: Mint an ormsr_ key (shown once)
+      summary: My Rigs API keys, listed from Accounts (metadata only)
+      description: "Keys are minted and revoked at `manage_url` (Accounts). `available: false` when Rigs can't reach Accounts right now."
       security: [{ bearer: [] }]
-      requestBody: { content: { application/json: { schema: { type: object, properties: { name: { type: string } } } } } }
-      responses: { "201": { description: Created } }
+      responses: { "200": { description: OK, content: { application/json: { schema: { type: object, properties: { manage_url: { type: string }, available: { type: boolean }, keys: { type: array, items: { type: object, properties: { jti: { type: string }, aud: { type: string }, name: { type: string }, scopes: { type: array, items: { type: string } }, created_at: { type: string, format: date-time }, expires_at: { type: string, format: date-time }, last_used_at: { type: [string, "null"], format: date-time }, renewable: { type: boolean }, replaced_by: { type: [string, "null"] } } } } } } } } } }
+    post: { tags: [keys], summary: "Retired: 410, make keys at Accounts", security: [{ bearer: [] }], responses: { "410": { description: Gone } } }
   /me/keys/{id}:
-    delete:
-      tags: [keys]
-      summary: Revoke a key
-      security: [{ bearer: [] }]
-      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
-      responses: { "204": { description: Revoked } }
+    delete: { tags: [keys], summary: "Retired: 410, revoke keys at Accounts", security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "410": { description: Gone } } }
   /admin/profiles:
     get:
       tags: [moderation]
