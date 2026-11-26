@@ -43,7 +43,9 @@ Common fields:
 - `menu` is where the setting lives in the radio's own menus, outermost first
   (`["OPERATION SETTING", "TX AUDIO", "PRMTRC EQ1"]`). Any step can have it. Clients show it
   as the manual fallback when a step can't be applied over CAT. In the apply-plan, `menu` falls
-  back to `manual.menu` split on `>`.
+  back to `manual.menu` split on `>`. Front-panel controls count too (`["FUNCTION", "NB"]`).
+  The server warns (never rejects) when a `level`, `func`, `parm` or `cat` step has no `menu`,
+  because people who set the radio up by hand need it.
 
 ## Safety
 
