@@ -1,7 +1,7 @@
 # openRMS identity: Accounts → services and apps (draft v0)
 
-> Status: **draft for review**, 2026-11-25. Implemented by openRMS-Accounts. Consumed by
-> openRMS-Directory, openRMS-Site, openRMS-Rigs, openRMS-Watch, later openRMS-Gateway,
+> Status: **draft for review**, 2026-11-25; the Directory was renamed **Atlas** on 2026-11-26. Implemented by openRMS-Accounts. Consumed by
+> openRMS-Atlas, openRMS-Site, openRMS-Rigs, openRMS-Watch, later openRMS-Gateway,
 > openRMS-Exchange and third-party apps. Open questions are marked **Q**.
 
 One account per person (or per callsign holder), one login, shared profile. openRMS-Accounts
@@ -15,7 +15,8 @@ account id (`sub`) next to its own data.
 |---|---|
 | `https://auth.openrms.dev` | **Issuer.** Login, sign-up, consent, device-link page, account settings, OIDC endpoints |
 | `https://openrms.dev` | Home: project landing page (static, no login) |
-| `https://directory.openrms.dev` | Directory API, and the Directory website (openRMS-Site) on the same origin |
+| `https://atlas.openrms.dev` | Atlas (formerly the Directory): the Atlas API and its website (openRMS-Site) on the same origin |
+| `https://directory.openrms.dev` | 301 redirect to `atlas.openrms.dev` (old name; not an audience) |
 | `https://watch.openrms.dev` | Watch downloads and docs (static, no API) |
 | `https://rigs.openrms.dev` | Rigs |
 
@@ -28,7 +29,7 @@ One subdomain per project; no project takes a generic `api.` name (user decision
   Accounts. A verified callsign is trusted **per issuer**: a service accepts the
   `callsign_verified` claim only from issuers it is configured to trust.
 - `.dev` is on the HSTS preload list: HTTPS everywhere, including staging. Local development
-  uses `localhost` (Accounts 8789, Directory 8787, Rigs API 8790 and site 5174).
+  uses `localhost` (Accounts 8789, Atlas 8787, Rigs API 8790 and site 5174).
 
 ## 2. How each kind of client signs in
 
@@ -38,9 +39,9 @@ One subdomain per project; no project takes a generic `api.` name (user decision
 | First-party server-rendered page | May forward the cookie to Accounts' session endpoint (§3b) |
 | Third-party web or mobile app | OIDC authorization code + **PKCE**, registered client |
 | Headless or desktop device (Watch, rigctlweb, hamstack) | OAuth device authorization grant (RFC 8628), public client id per app |
-| Service-to-service (Directory → Accounts lookups, webhooks) | OAuth client credentials |
+| Service-to-service (Atlas → Accounts lookups, webhooks) | OAuth client credentials |
 | Machines that post data (gateway heartbeats, watcher uploads, rig agents) | **API keys minted by the service that owns the data** (§5), not by Accounts |
-| Translator and Gateway **local** control UIs | **Never** a central login. Local auth only, so radios work with no internet. Linking an account is optional and only used for reporting to the Directory |
+| Translator and Gateway **local** control UIs | **Never** a central login. Local auth only, so radios work with no internet. Linking an account is optional and only used for reporting to Atlas |
 
 ## 3. Tokens
 
@@ -52,31 +53,31 @@ and the signature. Audiences:
 
 | Service | `aud` |
 |---|---|
-| Directory | `https://directory.openrms.dev` |
+| Atlas | `https://atlas.openrms.dev` |
 | Rigs | `https://rigs.openrms.dev` |
 
 Clients ask for an audience with the `resource` parameter (RFC 8707). Checked in
 `@better-auth/oauth-provider` 1.7.28: the **device grant** accepts `resource` (one or many) on
 the device authorization request, binds it to the user's approval, and refuses any other
 resource at the token endpoint (`invalid_target`). So Watch sends
-`resource=https://directory.openrms.dev` and gets a token with the Directory as `aud`.
+`resource=https://atlas.openrms.dev` and gets a token with Atlas as `aud`.
 **Q:** confirm the same for the authorization-code grant once the first third-party web
 client exists.
 
 ### Device flow, step by step (as implemented)
 
 1. Device: `POST {issuer}/api/auth/device/code` (form) `client_id=openrms-watch`,
-   `scope=openid callsign clubs offline_access`, `resource=<directory>` →
+   `scope=openid callsign clubs offline_access`, `resource=<atlas>` →
    `{device_code, user_code, verification_uri, verification_uri_complete, interval, expires_in}`.
 2. Approval page (signed in): `GET {issuer}/api/auth/device?user_code=…` **claims** the code
    for the session, then `POST {issuer}/api/auth/device/approve {userCode}` (or `/device/deny`).
 3. Device polls `POST {issuer}/api/auth/oauth2/token` (form)
    `grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=…&client_id=openrms-watch`
    no faster than `interval` (else `slow_down`) until it gets the token set (access token
-   `aud=<directory>`, refresh token).
+   `aud=<atlas>`, refresh token).
 
 A client may only request resources it is linked to; `openrms-watch` is linked to the
-Directory only.
+Atlas only.
 
 Lifetimes: access token 15 min, refresh token 30 days (rotating, revoked on password change,
 ban or sign-out everywhere), session cookie 7 days sliding.
@@ -115,7 +116,7 @@ moderators can change an account's callsign.
 
 First-party tokens also carry `role` (`user`, `moderator`, `admin`, `superadmin`). It says
 **who the person is to openRMS**. What a role may do in a service is decided by that service's
-own permission table (for example the Directory's `gateway:hide`). Third-party clients never
+own permission table (for example Atlas's `gateway:hide`). Third-party clients never
 receive `role`.
 
 Claims in a token are as fresh as the token (at most 15 min). A service that needs the current
@@ -128,8 +129,8 @@ the owner's `sub` stored on the key. A key only works at the service that issued
 
 | Prefix | Service | Purpose |
 |---|---|---|
-| `orms_` | Directory | gateway heartbeats |
-| `ormsw_` | Directory | watcher uploads (`../watch/feed.md`) |
+| `orms_` | Atlas | gateway heartbeats |
+| `ormsw_` | Atlas | watcher uploads (`../watch/feed.md`) |
 | `ormsr_` | Rigs | rig agents |
 
 Rules: keys are stored hashed, the kind of key is fixed at creation (never read from
@@ -137,12 +138,12 @@ user-editable metadata), each has its own rate limit, and a user can list and re
 keys. A device flow token (§2) is used once to mint the key, then discarded.
 
 **Migration:** keys issued before the split keep working unchanged: same hash, same owner
-(the account id becomes `sub` with the same value), same watcher. The Directory copies them
+(the account id becomes `sub` with the same value), same watcher. Atlas copies them
 into its own table in AC1; no deployed watcher or gateway needs re-linking.
 
 **Watch linking after the split** (agreed with openRMS-Watch): the approval page on Accounts
 knows nothing about watchers. The watcher app, holding the device token
-(`aud=https://directory.openrms.dev`), calls `GET /api/v1/me/watchers` to let the user pick, then
+(`aud=https://atlas.openrms.dev`), calls `GET /api/v1/me/watchers` to let the user pick, then
 `POST /api/v1/watch/link {watcherId} | {name, gridsquare?}`, which creates the watcher if
 needed, creates or rotates its key, and returns `{key, watcherId, name}`. Both accept the
 Accounts JWT as `Authorization: Bearer`.
@@ -178,14 +179,14 @@ Services must handle each event idempotently (`id` field) and may also reconcile
 
 **Local account cache.** A service that needs facts about *other* accounts (not the caller)
 keeps a cache table fed by these events plus a timed reconcile through §6: `sub`, `callsign`,
-`callsign_verified`, `banned`, club memberships. Example: the Directory uses callsign
+`callsign_verified`, `banned`, club memberships. Example: Atlas uses callsign
 verification in SQL (gateway dedupe, club `ownerVerified`, sightings `confirmed`, contributor
 list). Rules:
 - **Writes check the cache, not only the token**, for club membership and bans. A token can be
   up to 15 min old; `club.member_removed` and `user.banned` must cut access at once.
 - `user.banned` also disables that account's service-owned keys (§5) in every service.
-Example: the Directory deletes a club's own listings and releases its Winlink claims on
-`club.deleted` (today a hook inside the Directory).
+Example: Atlas deletes a club's own listings and releases its Winlink claims on
+`club.deleted` (its webhook handler).
 
 ## 8. Registered clients (initial)
 
@@ -193,7 +194,7 @@ Example: the Directory deletes a club's own listings and releases its Winlink cl
 |---|---|---|
 | `openrms-site` | first-party, public | cookie + JWT (3a) |
 | `openrms-rigs` | first-party, confidential | cookie + JWT, client credentials |
-| `openrms-directory` | service, confidential | client credentials |
+| `openrms-atlas` | service, confidential | client credentials |
 | `openrms-watch` | public | device code |
 | `rigctlweb` | public | device code, linked to Rigs only |
 | `hamstack` | public | device code, linked to Rigs only |
@@ -203,7 +204,7 @@ Example: the Directory deletes a club's own listings and releases its Winlink cl
 `@openrms/service-auth` (TypeScript, in openRMS-Accounts) exports
 `verifyAccessToken(token, {audience, issuers?}) → claims`. It returns the §4 claims (`sub`,
 `callsign`, `callsign_verified`, `callsign_verified_method`, `clubs`, `role`, …) or throws, and
-caches the JWKS. Directory and Rigs use it. A Rust equivalent, `openrms-auth`, follows in AC2.
+caches the JWKS. Atlas and Rigs use it. For Rust devices, `openrms-auth` (openRMS-Libs) does the device flow.
 
 ## 10. Security notes
 
