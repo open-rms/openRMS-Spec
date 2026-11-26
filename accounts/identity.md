@@ -1,6 +1,6 @@
 # openRMS identity: Accounts → services and apps (draft v0)
 
-> Status: **draft for review**, 2026-11-25; the Directory was renamed **Atlas** on 2026-11-26. Implemented by openRMS-Accounts. Consumed by
+> Status: **draft for review**, 2026-11-25; the Directory was renamed **Atlas** on 2026-11-26; 2FA, radios, profile visibility and avatars added 2026-11-26. Implemented by openRMS-Accounts. Consumed by
 > openRMS-Atlas, openRMS-Site, openRMS-Rigs, openRMS-Watch, later openRMS-Gateway,
 > openRMS-Exchange and third-party apps. Open questions are marked **Q**.
 
@@ -89,7 +89,7 @@ ban or sign-out everywhere), session cookie 7 days sliding.
    (CORS allows the trusted origins only) and receives
    `{token, token_type: "Bearer", expires_in: 900, expires_at}`. `aud` must be a configured
    first-party audience; anything else is `400 invalid_target`. The token carries the
-   first-party scopes `openid profile email callsign clubs` and `role`, and no `client_id`.
+   first-party scopes `openid profile email callsign clubs radios` and `role`, and no `client_id`.
 3. The app calls its service with `Authorization: Bearer <jwt>` and refreshes before expiry.
 
 ### 3b. Server-side session check
@@ -107,10 +107,11 @@ moderators can change an account's callsign.
 | Scope | Claims |
 |---|---|
 | `openid` | `sub` |
-| `profile` | `name`, `grid` |
+| `profile` | `name`, `grid`, `picture` (URL of the avatar proxy, §6a; only when the avatar is set and public) |
 | `email` | `email`, `email_verified` |
 | `callsign` | `callsign` (bare, upper case, no SSID), `callsign_verified` (bool), `callsign_verified_method` (`moderator`, later `lotw`, `license-db`, `on-air`) |
 | `clubs` | `clubs`: `[{"id","callsign","role":"owner"\|"admin"\|"member","verified":bool}]` |
+| `radios` | `radios`: Hamlib model macros of the user's radios, e.g. `["RIG_MODEL_FTDX10","RIG_MODEL_IC7300"]`, primary first, at most 20 (agreed with openRMS-Rigs) |
 | `offline_access` | refresh token |
 | `accounts.read` | client credentials only: the service API (§6) |
 
@@ -118,6 +119,43 @@ First-party tokens also carry `role` (`user`, `moderator`, `admin`, `superadmin`
 **who the person is to openRMS**. What a role may do in a service is decided by that service's
 own permission table (for example Atlas's `gateway:hide`). Third-party clients never
 receive `role`.
+
+### 4a. Profile visibility
+
+Each profile field has a visibility: `public` (anyone), `members` (anyone signed in to openRMS)
+or `private` (only the owner and openRMS staff tools). Defaults:
+
+| Field | Default | Notes |
+|---|---|---|
+| `callsign` | public | fixed: the callsign is the handle and a public record |
+| `name` | members | |
+| `grid` | private | at `public`, shown to 4 characters at most (e.g. `CN87`), never 6 |
+| `city` | private | free text, at most 64 characters |
+| `bio` | public | at most 280 characters |
+| `links` | public | at most 5 https URLs, each `{kind: "qrz"\|"website"\|"other", url}` |
+| `avatar` | public | §6a |
+
+A user can also hide the whole public profile (`hidden`); then §6a answers 404 to everyone but
+the owner.
+
+How visibility reaches tokens:
+- **Third-party** tokens (any `client_id` that is not first-party): under `profile`, a `private`
+  field is `null`, `grid` is cut to what its visibility allows, and `picture` is absent unless
+  the avatar is `public`. The consent screen says "as you share them".
+- **First-party** tokens and the service API (§6) carry full values, because services use them
+  server-side (Atlas computes distances from `grid`). **Anything a service shows to other people
+  must come from the public profile (§6a) or honour the `visibility` object (§6), never from a
+  token's claims.**
+
+### 4b. Staff second factor
+
+Staff (`moderator`, `admin`, `superadmin`) must have a second factor: TOTP or a passkey. A staff
+account without one is treated as `user`: first-party tokens carry `role: "user"` and Accounts'
+admin API refuses it (`403 staff actions need 2FA`). Nobody can be given a staff role before
+they have enrolled. Recovery when every factor is lost is a superadmin command on the Accounts
+host (`reset-2fa`), audited, which also ends the account's sessions and refresh tokens.
+Second factors do not change the device flow or §3a: both run inside an Accounts session that
+has already passed them.
 
 Claims in a token are as fresh as the token (at most 15 min). A service that needs the current
 value for a sensitive action (deleting, transferring ownership) asks Accounts (§6).
@@ -159,16 +197,33 @@ club verification, update or deletion for all its members). Each user payload ca
 current `clubs`, so polling users is enough. `GET /api/v1/clubs` lists every existing club,
 so a service can drop deleted ones.
 
-- `GET /api/v1/users/{sub}`: `{sub, name, callsign, callsign_verified, callsign_verified_method, grid, role, banned, clubs}`.
+- `GET /api/v1/users/{sub}`: `{sub, name, callsign, callsign_verified, callsign_verified_method, grid, role, banned, clubs, radios, visibility}`.
+  `visibility` maps each §4a field to `public`/`members`/`private` and adds `hidden` (bool).
+- `GET /api/v1/users/{sub}/radios`: `[{model: "RIG_MODEL_FT991", hamlib_model: 1035, label: "FT-991A", primary: bool}]`.
+  `model` (the Hamlib macro) is the key; `hamlib_model` is the fallback should a macro be renamed;
+  `label` is the user's own name for it (one macro can cover several products).
 - `GET /api/v1/users?callsign=W1AW`: resolve a callsign to `sub` (for "add member", claims).
 - `GET /api/v1/clubs/{id}` and `GET /api/v1/clubs/{id}/members`.
+
+## 6a. Public profile (no client credentials)
+
+- `GET {issuer}/api/v1/profiles/{callsign|sub}`: `{sub, callsign, callsign_verified, name?, grid?,
+  city?, bio?, links?, picture?}` with only the fields the caller may see: anonymous callers get
+  `public` fields; a first-party bearer token or an Accounts session adds `members` fields.
+  `private` fields are never returned. Hidden, banned or unknown accounts: 404. Rate limited.
+  The profile page is `{issuer}/u/{callsign}`.
+- `GET {issuer}/api/v1/avatars/{sub}?s=64|128|256`: the avatar as WebP, or 404 (show a callsign
+  monogram). Accounts fetches the source (Gravatar, opt-in, or a user's https URL) itself, so
+  browsers never see the email hash and image hosts never see viewers. It checks the type by
+  magic bytes (PNG, JPEG, WebP, GIF; never SVG), refuses private addresses and more than 2 MB,
+  and re-encodes. Cached; honours `ETag`.
 
 ## 7. Events (webhooks)
 
 Accounts posts signed JSON (`openrms-signature: t=<unix>,v1=<hmac-sha256>`, one secret per
 subscriber) to each registered service, retried with backoff from an outbox table:
 
-`user.updated` (incl. callsign change), `user.callsign_verified`, `user.banned`,
+`user.updated` (incl. callsign, profile, visibility and radios changes), `user.callsign_verified`, `user.banned`,
 `user.deleted`, `club.created`, `club.deleted`, `club.member_added`, `club.member_removed`,
 `club.verified`.
 
@@ -196,8 +251,8 @@ Example: Atlas deletes a club's own listings and releases its Winlink claims on
 | `openrms-rigs` | first-party, confidential | cookie + JWT, client credentials |
 | `openrms-atlas` | service, confidential | client credentials |
 | `openrms-watch` | public | device code |
-| `rigctlweb` | public | device code, linked to Rigs only |
-| `hamstack` | public | device code, linked to Rigs only |
+| `rigctlweb` | public | device code, linked to Rigs only; may ask for `radios` |
+| `hamstack` | public | device code, linked to Rigs only; may ask for `radios` |
 
 ## 9. Shared verifier
 
@@ -217,5 +272,7 @@ caches the JWKS. Atlas and Rigs use it. For Rust devices, `openrms-auth` (openRM
 - A ban, and any password change or reset, revokes the account's refresh tokens at once.
   Access tokens already issued run out within 15 min; services cut access sooner from the
   `user.banned` event (§7).
+- Staff need a second factor (§4b). Passkeys are bound to the issuer's host
+  (`auth.openrms.dev`); a self-hosted issuer has its own.
 - Each service has a different `aud`, so a token stolen from one service cannot be replayed
   at another.
