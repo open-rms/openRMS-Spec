@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: openRMS Rigs API
-  version: 1.2.0-alpha
+  version: 1.3.0-alpha
   summary: Crowd-sourced radio settings profiles, per radio model and operation.
   description: |
     Profiles say how to set up one radio model for one operation (FT8, CW, Winlink ARDOP...).
@@ -282,6 +282,12 @@ paths:
     get:
       tags: [catalog]
       summary: Radio models (Hamlib catalog)
+      description: |
+        `q` ignores case, punctuation and spaces, and every word must match ("ic 7300", "ft-dx10").
+        Results rank exact normalized matches of the name or macro first, then prefix, then
+        substring. With a first-party token carrying `radios`, the user's radios come next (and
+        first when there is no `q`), marked `yours: true`; such responses are `Cache-Control: private`
+        with `Vary: Authorization`. `GET /profiles` likewise lists the user's radios first.
       parameters:
         - { name: q, in: query, schema: { type: string } }
         - { name: mfg, in: query, schema: { type: string } }
@@ -509,7 +515,14 @@ paths:
       requestBody: { required: true, content: { application/yaml: { schema: { type: string } }, application/json: { schema: { type: object } } } }
       responses: { "200": { description: OK } }
   /me:
-    get: { tags: [contribute], summary: Who am I, security: [{ bearer: [] }, { key: [] }], responses: { "200": { description: OK } } }
+    get: { tags: [contribute], summary: "Who am I (with `radios`, the token's radio macros)", security: [{ bearer: [] }, { key: [] }], responses: { "200": { description: OK } } }
+  /me/radios:
+    get:
+      tags: [contribute]
+      summary: My radios ("My radios" at Accounts), with catalog names and public profile counts
+      description: "Labels and hamlib_model come from Accounts; `source: token` when only the token's `radios` claim was available."
+      security: [{ bearer: [] }]
+      responses: { "200": { description: OK, content: { application/json: { schema: { type: object, properties: { source: { enum: [accounts, token] }, radios: { type: array, items: { type: object, properties: { model: { type: string }, hamlib_model: { type: [integer, "null"] }, label: { type: [string, "null"] }, primary: { type: boolean }, mfg: { type: [string, "null"] }, name: { type: [string, "null"] }, profiles: { type: integer } } } } } } } } } }
   /me/favorites:
     get:
       tags: [contribute]
