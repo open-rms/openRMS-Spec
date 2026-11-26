@@ -1,6 +1,6 @@
 # openRMS identity: Accounts → services and apps (draft v0)
 
-> Status: **draft for review**, 2026-11-25; the Directory was renamed **Atlas** on 2026-11-26; 2FA, radios, profile visibility and avatars added 2026-11-26. Implemented by openRMS-Accounts. Consumed by
+> Status: **draft for review**, 2026-11-25; the Directory was renamed **Atlas** on 2026-11-26; 2FA, radios, profile visibility and avatars added 2026-11-26; Accounts mints API keys (§5) since 2026-11-26. Implemented by openRMS-Accounts. Consumed by
 > openRMS-Atlas, openRMS-Site, openRMS-Rigs, openRMS-Watch, later openRMS-Gateway,
 > openRMS-Exchange and third-party apps. Open questions are marked **Q**.
 
@@ -40,7 +40,7 @@ One subdomain per project; no project takes a generic `api.` name (user decision
 | Third-party web or mobile app | OIDC authorization code + **PKCE**, registered client |
 | Headless or desktop device (Watch, rigctlweb, hamstack) | OAuth device authorization grant (RFC 8628), public client id per app |
 | Service-to-service (Atlas → Accounts lookups, webhooks) | OAuth client credentials |
-| Machines that post data (gateway heartbeats, watcher uploads, rig agents) | **API keys minted by the service that owns the data** (§5), not by Accounts |
+| Machines that post data (gateway heartbeats, watcher uploads, rig agents) | **API keys minted by Accounts** for one service, verified offline by that service (§5) |
 | Translator and Gateway **local** control UIs | **Never** a central login. Local auth only, so radios work with no internet. Linking an account is optional and only used for reporting to Atlas |
 
 ## 3. Tokens
@@ -160,31 +160,95 @@ has already passed them.
 Claims in a token are as fresh as the token (at most 15 min). A service that needs the current
 value for a sensitive action (deleting, transferring ownership) asks Accounts (§6).
 
-## 5. Service-owned API keys
+## 5. API keys
 
-Keys that let a machine act on a service's data are minted and checked by that service, with
-the owner's `sub` stored on the key. A key only works at the service that issued it.
+Accounts mints every API key; services only verify them (user decision, 2026-11-26; this replaces
+the service-minted `orms_`, `ormsw_` and `ormsr_` keys).
 
-| Prefix | Service | Purpose |
-|---|---|---|
-| `orms_` | Atlas | gateway heartbeats |
-| `ormsw_` | Atlas | watcher uploads (`../watch/feed.md`) |
-| `ormsr_` | Rigs | rig agents |
+### 5.1 Format
 
-Rules: keys are stored hashed, the kind of key is fixed at creation (never read from
-user-editable metadata), each has its own rate limit, and a user can list and revoke their
-keys. A device flow token (§2) is used once to mint the key, then discarded.
+A key is `ormk_` followed by a JWT signed with the issuer's JWKS (the same keys as access tokens):
 
-**Migration:** keys issued before the split keep working unchanged: same hash, same owner
-(the account id becomes `sub` with the same value), same watcher. Atlas copies them
-into its own table in AC1; no deployed watcher or gateway needs re-linking.
+- header `typ: "openrms-key+jwt"`, `alg: EdDSA`;
+- claims `iss`, `sub` (owner), `aud` (exactly **one** service), `scope` (space-separated),
+  `jti`, `iat`, `exp`, `token_use: "api_key"`, `callsign` (owner's callsign when minted; for
+  display only, data is keyed on `sub`), and `renewable: true` on keys that may renew
+  themselves (§5.4).
 
-**Watch linking after the split** (agreed with openRMS-Watch): the approval page on Accounts
-knows nothing about watchers. The watcher app, holding the device token
-(`aud=https://atlas.openrms.dev`), calls `GET /api/v1/me/watchers` to let the user pick, then
-`POST /api/v1/watch/link {watcherId} | {name, gridsquare?}`, which creates the watcher if
-needed, creates or rotates its key, and returns `{key, watcherId, name}`. Both accept the
-Accounts JWT as `Authorization: Bearer`.
+Use: `Authorization: Bearer ormk_…`. The prefix tells keys from access tokens and is
+registered for secret scanning. Expiry: default 90 days, at most 1 year, never none. Accounts
+emails the owner 14 and 3 days before a key expires. A key is shown once; Accounts stores only
+`{jti, sub, aud, scopes, name, created, exp, last_used, revoked, replaced_by}`.
+
+The issuer keeps a retired signing key in its JWKS for at least the longest key lifetime
+(1 year), so rotating keys never voids API keys.
+
+### 5.2 Scopes (registry)
+
+Each service owns its key scopes and publishes them in its OAuth Protected Resource Metadata
+(RFC 9728) at `{service}/.well-known/oauth-protected-resource`:
+`{"resource": "<aud>", "scopes_supported": [...], "openrms_key_scopes": [{"scope", "description"}]}`.
+`openrms_key_scopes` is the subset a key may carry. Accounts reads it for every configured
+resource (cached 1 h, last good copy kept) and offers only those scopes. Current lists:
+
+| Service | Key scopes |
+|---|---|
+| Atlas | `heartbeat` (gateway heartbeat, still-on-air confirm), `watch:ingest`, `gateways:read` (your own), `gateways:write` |
+| Rigs | `profiles:write` (submit and edit your own), `profiles:read-private` (your own pending or hidden), `favorites`, `reports:write`, `comments:write` |
+
+**Rule: staff and moderation actions are never key-grantable.** A service never lists them in
+`openrms_key_scopes`, and its staff routes refuse any key (`token_use: "api_key"`) whatever its
+scopes. Staff act only with first-party access tokens (§3a, §4b).
+
+### 5.3 Minting and managing
+
+- **People:** `{issuer}/keys` ("API keys"). Pick a service, tick scopes, name the key, pick an
+  expiry (30, 90, 180 or 365 days); the key is shown once with a curl example. The list shows
+  last use and expiry, with revoke and revoke all. Minting needs a session that signed in
+  within 24 h. At most 50 active keys per account. Cookie routes:
+  `GET|POST /api/v1/me/keys`, `DELETE /api/v1/me/keys/{jti}`, `POST /api/v1/me/keys/revoke-all`.
+- **Devices** (Watch): `POST {issuer}/api/v1/keys {aud, scopes, name, expires_in_days}` with an
+  access token from the device flow (`resource={issuer}`, scope `keys`). Each client has a key
+  policy in its client metadata (`openrms-watch`: Atlas `watch:ingest`, renewable, at most
+  1 year); anything outside it is `403`.
+- Right after a password change or reset, and after a 2FA reset (by the user or a superadmin),
+  Accounts asks "Revoke all API keys?". Keys are for machines, so they otherwise survive these.
+
+### 5.4 Renewal (renewable keys only)
+
+`POST {issuer}/api/v1/keys/renew` with `Authorization: Bearer ormk_…` returns a new key with the
+same `aud`, scopes, name and lifetime, and revokes the old one (`replaced_by` = new `jti`; the
+list shows the chain). Allowed only from an unrevoked, unexpired, renewable key. If the
+response is lost, the same old key may retry for 10 minutes; each retry revokes the previous
+replacement. Every renewal emails the owner. Revoke all ends the whole chain.
+
+### 5.5 Verifying and revocation
+
+Services verify keys **offline** like access tokens (§9: `verifyBearer`), and also:
+- check the `jti` against a **persisted** denylist (a table, rows pruned at `exp`), fed by the
+  `key.revoked` webhook (§7) as the fast path and by pulling
+  `GET /api/v1/keys/revoked?since=<ISO>` (§6) at startup and every 5 minutes;
+- check the owner against the local account cache (§7): a banned owner's keys stop at once;
+- if Accounts can't be reached, keep accepting keys and log loudly (fail open); a cut-off
+  Accounts must not take gateways off the air.
+
+What revokes keys: revoke or revoke all, renewal (the old key), ban and deletion of the owner.
+
+Services report use in batches (`POST /api/v1/keys/used`, every 5 minutes) so the list can
+show last use.
+
+### 5.6 Migration
+
+Live data on 2026-11-26: Atlas 0 keys, Rigs 2 `ormsr_` keys (both the project owner's). There
+is no dual-accept period: at cutover services stop accepting and minting their own keys and
+link to `{issuer}/keys`; the owner re-mints the two Rigs keys. The old key tables stay,
+read-only, and are dropped in a later migration.
+
+**Watch:** the watcher app links with the device flow, then mints a renewable Atlas key
+(`watch:ingest`) and binds it to its watcher at Atlas: `POST /api/v1/watch/link` with the new key records
+`jti → watcherId` (Atlas's choice; keys carry no watcher claim). Atlas drops the binding when
+the key is revoked. It renews the key before expiry, so a watcher needs neither Accounts' uptime nor a
+refresh token to keep uploading.
 
 ## 6. Accounts API for services (client credentials)
 
@@ -204,6 +268,13 @@ so a service can drop deleted ones.
   `label` is the user's own name for it (one macro can cover several products).
 - `GET /api/v1/users?callsign=W1AW`: resolve a callsign to `sub` (for "add member", claims).
 - `GET /api/v1/clubs/{id}` and `GET /api/v1/clubs/{id}/members`.
+
+Scope `accounts.keys` (API keys, §5). The audience a service sees comes from its client's
+metadata, never from the request:
+- `GET /api/v1/users/{sub}/keys`: that user's keys for the caller's audience (metadata, never the key).
+- `GET /api/v1/keys/revoked?since=<ISO>`: `[{jti, sub, exp, revoked_at}]` for the caller's
+  audience, unexpired only.
+- `POST /api/v1/keys/used`: `[{jti, at}]`; Accounts records last use to the minute.
 
 ## 6a. Public profile (no client credentials)
 
@@ -225,7 +296,7 @@ subscriber) to each registered service, retried with backoff from an outbox tabl
 
 `user.updated` (incl. callsign, profile, visibility and radios changes), `user.callsign_verified`, `user.banned`,
 `user.deleted`, `club.created`, `club.deleted`, `club.member_added`, `club.member_removed`,
-`club.verified`.
+`club.verified`, `key.revoked` (`{jti, aud, sub, exp}`, sent only to the service that is the key's `aud`).
 
 Every `club.*` event carries the club's `id`, `callsign` and `name`; member events add `sub`
 (and `role`). User events carry `sub`.
@@ -239,7 +310,7 @@ verification in SQL (gateway dedupe, club `ownerVerified`, sightings `confirmed`
 list). Rules:
 - **Writes check the cache, not only the token**, for club membership and bans. A token can be
   up to 15 min old; `club.member_removed` and `user.banned` must cut access at once.
-- `user.banned` also disables that account's service-owned keys (§5) in every service.
+- `user.banned` also stops that account's API keys (§5.5) in every service.
 Example: Atlas deletes a club's own listings and releases its Winlink claims on
 `club.deleted` (its webhook handler).
 
@@ -250,7 +321,7 @@ Example: Atlas deletes a club's own listings and releases its Winlink claims on
 | `openrms-site` | first-party, public | cookie + JWT (3a) |
 | `openrms-rigs` | first-party, confidential | cookie + JWT, client credentials |
 | `openrms-atlas` | service, confidential | client credentials |
-| `openrms-watch` | public | device code |
+| `openrms-watch` | public | device code; mints renewable Atlas `watch:ingest` keys (§5.3) |
 | `rigctlweb` | public | device code, linked to Rigs only; may ask for `radios` |
 | `hamstack` | public | device code, linked to Rigs only; may ask for `radios` |
 
@@ -259,7 +330,12 @@ Example: Atlas deletes a club's own listings and releases its Winlink claims on
 `@openrms/service-auth` (TypeScript, in openRMS-Accounts) exports
 `verifyAccessToken(token, {audience, issuers?}) → claims`. It returns the §4 claims (`sub`,
 `callsign`, `callsign_verified`, `callsign_verified_method`, `clubs`, `role`, …) or throws, and
-caches the JWKS. Atlas and Rigs use it. For Rust devices, `openrms-auth` (openRMS-Libs) does the device flow.
+caches the JWKS. Atlas and Rigs use it. `verifyAccessToken` refuses API keys.
+`verifyBearer(token, {audience, isRevoked})` accepts either and returns
+`{kind: "access" | "key", claims}`; `isRevoked(jti)` is the service's denylist lookup.
+`RevocationSync` pulls `/api/v1/keys/revoked` and ingests `key.revoked`; on both paths it hands
+the service each newly revoked `{jti, sub, exp, revoked_at}` to store (and, for example, to drop
+rows bound to that key), and asks the service for its last sync time. For Rust devices, `openrms-auth` (openRMS-Libs) does the device flow.
 
 ## 10. Security notes
 
@@ -272,6 +348,7 @@ caches the JWKS. Atlas and Rigs use it. For Rust devices, `openrms-auth` (openRM
 - A ban, and any password change or reset, revokes the account's refresh tokens at once.
   Access tokens already issued run out within 15 min; services cut access sooner from the
   `user.banned` event (§7).
+- Staff and moderation are never key-grantable (§5.2): staff routes refuse API keys.
 - Staff need a second factor (§4b). Passkeys are bound to the issuer's host
   (`auth.openrms.dev`); a self-hosted issuer has its own.
 - Each service has a different `aud`, so a token stolen from one service cannot be replayed
