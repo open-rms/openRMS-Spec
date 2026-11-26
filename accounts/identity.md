@@ -66,18 +66,33 @@ client exists.
 
 ### Device flow, step by step (as implemented)
 
+Watch's linking flow, checked end to end against Accounts on 2026-11-26. rigctlweb and hamstack
+use steps 1 to 3 with one resource (Rigs) and no `keys`.
+
 1. Device: `POST {issuer}/api/auth/device/code` (form) `client_id=openrms-watch`,
-   `scope=openid callsign clubs offline_access`, `resource=<atlas>` →
+   `scope=openid callsign clubs keys offline_access`, `resource={issuer}` **and**
+   `resource=<atlas>` (the parameter repeated) →
    `{device_code, user_code, verification_uri, verification_uri_complete, interval, expires_in}`.
 2. Approval page (signed in): `GET {issuer}/api/auth/device?user_code=…` **claims** the code
    for the session, then `POST {issuer}/api/auth/device/approve {userCode}` (or `/device/deny`).
 3. Device polls `POST {issuer}/api/auth/oauth2/token` (form)
-   `grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=…&client_id=openrms-watch`
-   no faster than `interval` (else `slow_down`) until it gets the token set (access token
-   `aud=<atlas>`, refresh token).
+   `grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=…&client_id=openrms-watch&resource={issuer}`
+   no faster than `interval` (else `slow_down`) until it gets the token set: an access token for
+   Accounts itself (`aud` includes the issuer, scope includes `keys`) and a refresh token.
+4. Atlas token: `grant_type=refresh_token&refresh_token=…&client_id=openrms-watch&resource=<atlas>`
+   gives an access token with `aud` including Atlas. Watch uses it to list the user's watchers
+   (`GET <atlas>/api/v1/me/watchers`).
+5. Key: `POST {issuer}/api/v1/keys` with `Authorization: Bearer <the issuer token from step 3>`,
+   `{aud: <atlas>, scopes: ["watch:ingest"], name, expires_in_days: 365}` → a renewable
+   `ormk_` key (§5.3, §5.4), then `POST <atlas>/api/v1/watch/link` with that key binds it.
+6. Watch revokes the refresh token (`POST {issuer}/api/auth/oauth2/revoke`,
+   `token_type_hint=refresh_token`) and from then on keeps only the key.
 
-A client may only request resources it is linked to; `openrms-watch` is linked to the
-Atlas only.
+Access tokens that include `openid` also list the userinfo endpoint in `aud`; check that your
+audience is *in* `aud` (the shared verifier does).
+
+A client may only request resources it is linked to: `openrms-watch` is linked to Atlas and to
+the issuer; rigctlweb and hamstack to Rigs.
 
 Lifetimes: access token 15 min, refresh token 30 days (rotating, revoked on password change,
 ban or sign-out everywhere), session cookie 7 days sliding.
