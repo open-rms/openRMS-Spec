@@ -173,7 +173,7 @@ A key is `ormk_` followed by a JWT signed with the issuer's JWKS (the same keys 
 - claims `iss`, `sub` (owner), `aud` (exactly **one** service), `scope` (space-separated),
   `jti`, `iat`, `exp`, `token_use: "api_key"`, `callsign` (owner's callsign when minted; for
   display only, data is keyed on `sub`), and `renewable: true` on keys that may renew
-  themselves (§5.4).
+  themselves (§5.4), and `replaces: "<old jti>"` on a key made by renewal.
 
 Use: `Authorization: Bearer ormk_…`. The prefix tells keys from access tokens and is
 registered for secret scanning. Expiry: default 90 days, at most 1 year, never none. Accounts
@@ -217,7 +217,7 @@ scopes. Staff act only with first-party access tokens (§3a, §4b).
 ### 5.4 Renewal (renewable keys only)
 
 `POST {issuer}/api/v1/keys/renew` with `Authorization: Bearer ormk_…` returns a new key with the
-same `aud`, scopes, name and lifetime, and revokes the old one (`replaced_by` = new `jti`; the
+same `sub`, `aud`, scopes, name and lifetime and `replaces` set to the old `jti`, and revokes the old one (`replaced_by` = new `jti`; the
 list shows the chain). Allowed only from an unrevoked, unexpired, renewable key. If the
 response is lost, the same old key may retry for 10 minutes; each retry revokes the previous
 replacement. Every renewal emails the owner. Revoke all ends the whole chain.
@@ -247,7 +247,8 @@ read-only, and are dropped in a later migration.
 **Watch:** the watcher app links with the device flow, then mints a renewable Atlas key
 (`watch:ingest`) and binds it to its watcher at Atlas: `POST /api/v1/watch/link` with the new key records
 `jti → watcherId` (Atlas's choice; keys carry no watcher claim). Atlas drops the binding when
-the key is revoked. It renews the key before expiry, so a watcher needs neither Accounts' uptime nor a
+the key is revoked. A renewed key that arrives before the revocation does rebinds at once
+through its `replaces` claim, if the old `jti` is bound to a watcher of the same `sub`. It renews the key before expiry, so a watcher needs neither Accounts' uptime nor a
 refresh token to keep uploading.
 
 ## 6. Accounts API for services (client credentials)
