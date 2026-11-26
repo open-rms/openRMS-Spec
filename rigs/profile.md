@@ -41,6 +41,20 @@ Common fields:
 - Audio targets (`audio.rx_target_dbfs`) let a client measure a level and give advice when the
   level can't be set over CAT.
 
+## Sources and confidence
+
+`sources` lists where the settings come from: `{id, title, author?, url?, date?, note?}`, with
+ids `S1`, `S2`, …. Steps cite them by id (`sources: [S1, S3]`), so citations survive reordering and
+clones. The server rejects a citation of an id that isn't listed. A step can also carry
+`confidence`:
+- `high`: the manual, or three or more sources, agree;
+- `medium`: some sources support it;
+- `low`: thin support.
+
+Profiles are CC-BY-SA-4.0. Record settings as facts with a link and credit; don't copy text
+from manuals or articles. Keep an `unverified` tag until someone reports the profile working on
+air. Sources stay in the document but are left out of the apply-plan.
+
 ## Never allowed
 
 A profile can't contain anything that **keys the transmitter**. The server rejects it with a 422:

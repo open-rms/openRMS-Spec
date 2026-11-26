@@ -57,6 +57,24 @@
         }
       }
     },
+    "sources": {
+      "type": "array",
+      "maxItems": 20,
+      "description": "Where these settings come from, for credit and checking. Steps cite entries by id.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^S[0-9]{1,2}$", "description": "S1, S2, … (cited by steps; stable when reordered)" },
+          "title": { "type": "string", "maxLength": 200 },
+          "author": { "type": "string", "maxLength": 120, "description": "Person or organization." },
+          "url": { "type": "string", "format": "uri", "maxLength": 500 },
+          "date": { "type": "string", "maxLength": 20 },
+          "note": { "type": "string", "maxLength": 300 }
+        }
+      }
+    },
     "notes": { "type": "string", "maxLength": 20000, "description": "Markdown." },
     "tags": { "type": "array", "maxItems": 10, "items": { "type": "string", "pattern": "^[a-z0-9-]{1,30}$" } }
   },
@@ -107,7 +125,9 @@
             "image": { "type": "string", "format": "uri" }
           }
         },
-        "note": { "type": "string", "maxLength": 1000 }
+        "note": { "type": "string", "maxLength": 1000 },
+        "sources": { "type": "array", "maxItems": 10, "items": { "type": "string", "pattern": "^S[0-9]{1,2}$" }, "description": "Ids from the profile's sources that support this step." },
+        "confidence": { "enum": ["high", "medium", "low"], "description": "How well the sources support this value." }
       },
       "allOf": [
         { "if": { "properties": { "kind": { "const": "cat" } } }, "then": { "required": ["cat"] } },

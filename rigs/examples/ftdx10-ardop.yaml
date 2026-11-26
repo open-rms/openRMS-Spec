@@ -42,7 +42,7 @@ steps:
       read: "EX010413;"
       reply: "^EX010413(\\d{3});$"
       set: "EX010413{value:03};"
-    note: Receive audio to the computer. CAT codes verified (reads EX010413050;), but the effect is not; stepping 50 to 15 with AGC OFF changed USB receive level by under 0.5 dB. Hamlib's USB_AF returns RPRT -1 on this radio, so raw CAT.
+    note: CAT codes verified (reads EX010413050;). Yaesu's manual describes DATA OUT LEVEL as the rear RTTY/DATA jack level, not USB audio, which fits stepping it 50 to 15 changing USB receive level by under 0.5 dB. Hamlib's USB_AF returns RPRT -1 on this radio.
   - id: data-mod-source
     kind: cat
     name: DATA MOD SOURCE
