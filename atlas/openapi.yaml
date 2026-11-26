@@ -125,7 +125,7 @@ paths:
     post:
       tags: [Gateway software]
       summary: Watcher upload (NDJSON), see openRMS-Spec/watch/feed.md
-      description: "x-api-key: ormsw_… (watcher key). At most 1000 lines or 1 MB. Events: frame, attempt, coverage, status. Idempotent per (watcher, event id)."
+      description: "x-api-key: ormsw_… (watcher key). At most 5000 lines or 5 MB; watchers batch one POST every 10 minutes. Events: frame, attempt, coverage, status. Idempotent per (watcher, event id)."
       security: [{ apiKey: [] }]
       requestBody: { required: true, content: { application/x-ndjson: { schema: { type: string } } } }
       responses:

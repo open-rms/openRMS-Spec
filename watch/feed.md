@@ -16,7 +16,7 @@ feed, "heard on air" evidence on gateway pages, and a contributor list.
   list, default true). Returns `{id, ...}`. `GET|PATCH|DELETE /api/v1/me/watchers/{id}`.
 - **Watcher token:** a Better Auth API key from a **separate key configuration**
   (`configId: "watcher"`, prefix `ormsw_`, its own rate limit of about 400/hour for one POST
-  every 10–30 s). The kind of key comes from `configId`, **not** from metadata: users can set key
+  every 10 minutes; see §2). The kind of key comes from `configId`, **not** from metadata: users can set key
   metadata themselves, so a `scope` field there can't be trusted. Ingest calls
   `verifyApiKey({configId: "watcher"})`; the gateway heartbeat must reject non-default
   configIds (it doesn't check today, so a watcher key would pass it; to be fixed with this work).
@@ -46,7 +46,9 @@ feed, "heard on air" evidence on gateway pages, and a contributor list.
 
 ## 2. Upload: `POST /api/v1/watch/ingest`
 
-`x-api-key: ormsw_...`, `content-type: application/x-ndjson`, at most 1000 lines or 1 MB.
+`x-api-key: ormsw_...`, `content-type: application/x-ndjson`, at most 5000 lines or 5 MB. **Watchers batch: one POST every 10 minutes** (decided 2026-11-26),
+sooner only when the queue nears the line limit. The live feed therefore lags real time by up
+to about 10 minutes; timestamps are the watcher's, so sightings are unaffected.
 One JSON object per line. Every event has a watcher-generated `id` (ULID), so retries are
 idempotent: the server ignores ids it has already stored (unique per watcher). The watcher
 queues events locally and retries with backoff while offline, so nothing heard is lost.
@@ -167,7 +169,7 @@ then (3) callsigns heard in clear in CALL/CQ frames. A match that is still ambig
 
 `GET /api/v1/watch/contributors?days=7`: public watchers active within `days` (default 7,
 max 90): callsign, watcher name, grid (as allowed), bands covered, listening hours, frames,
-first contribution date, `live` (a status event within 10 min). The site shows it as a ranked
+first contribution date, `live` (an upload within 25 min, allowing for the 10-minute batches). The site shows it as a ranked
 list with a live indicator. Accounts with `public=false` watchers are counted in totals but not
 named.
 
