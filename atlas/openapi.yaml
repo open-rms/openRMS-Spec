@@ -434,7 +434,7 @@ components:
   schemas:
     ModemId:
       type: string
-      enum: [packet, robust-packet, pactor, ardop, vara-hf, vara-fm, mercury, data2g, modem73, ion-hf, freedata, other]
+      enum: [packet, robust-packet, pactor, ardop, vara-hf, vara-fm, mercury, xara, data2g, modem73, ion-hf, freedata, other]
     Modem:
       type: object
       properties:
