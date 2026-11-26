@@ -1,6 +1,6 @@
 {
   "$comment": "Conformance vectors for Rigs checks and the raw-CAT allow-list. openRMS-Rigs runs these in its test suite against POST /check's logic and rigs/cat-allowlist.json; client implementations (rigctlWeb) should pass them too. Semantics: profile.md, 'Checks' and 'Raw CAT allow-list'.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "check": {
     "$comment": "Each case: one profile step, the value a client read from the radio (null = couldn't read), the Hamlib step size used as tolerance (levels only; the 'get' range step from rigctl --dump-caps, 0 when the range is 0..0), and the expected status. Cases use RIG_MODEL_IC7300 (Hamlib 4.7.2) so tolerances match its catalog.",
     "rig": "RIG_MODEL_IC7300",
@@ -72,6 +72,30 @@
       { "protocol": "civ", "use": "set", "command": "0500", "allowed": false, "why": "frequency goes through rigctld" },
       { "protocol": "civ", "use": "set", "command": "06 03", "allowed": false, "why": "space" },
       { "protocol": "civ", "use": "set", "command": "FEFE94E01A050071FD", "allowed": false, "why": "framed: send the body only" }
+    ]
+  },
+  "steps": {
+    "$comment": "Step-level CAT rules (cat-allowlist.json step_rules): a step's read must be its set template without the placeholder, and its reply must be anchored to its read. valid: whether the step's cat object passes; field: the first field at fault.",
+    "cases": [
+      {"name": "valid: read, set and reply bound together", "cat": {"protocol": "ascii", "read": "EX010413;", "reply": "^EX010413(\\d{3});$", "set": "EX010413{value:03};"}, "valid": true},
+      {"name": "valid: read-only family without set", "cat": {"protocol": "ascii", "read": "SM0;", "reply": "^SM0(\\d{3});$"}, "valid": true},
+      {"name": "valid: CI-V menu item", "cat": {"protocol": "civ", "read": "1A050071", "reply": "^1A050071([0-9A-F]{2})$", "set": "1A050071{value:02}"}, "valid": true},
+      {"name": "set disguised as read: PC100; is a set of power", "cat": {"protocol": "ascii", "read": "PC100;", "reply": "^PC100(\\d{3});$", "set": "PC{value:03};"}, "valid": false, "field": "read"},
+      {"name": "set disguised as read: EX0104161; sets REAR SELECT", "cat": {"protocol": "ascii", "read": "EX0104161;", "reply": "^EX0104161(\\d);$", "set": "EX010416{value};"}, "valid": false, "field": "read"},
+      {"name": "set disguised as read with no set to bind it", "cat": {"protocol": "ascii", "read": "EX0104161;", "reply": "^EX0104161(\\d);$"}, "valid": false, "field": "read"},
+      {"name": "read of a settable family with no set", "cat": {"protocol": "ascii", "read": "PC;", "reply": "^PC(\\d{3});$"}, "valid": false, "field": "read"},
+      {"name": "read with two commands", "cat": {"protocol": "ascii", "read": "GT0;MD0;", "reply": "^GT0(\\d);$", "set": "GT0{value};"}, "valid": false, "field": "read"},
+      {"name": "CI-V set disguised as read", "cat": {"protocol": "civ", "read": "1A05007101", "reply": "^1A05007101([0-9A-F]{2})$", "set": "1A050071{value:02}"}, "valid": false, "field": "read"},
+      {"name": "set placeholder not at the end", "cat": {"protocol": "ascii", "read": "EX010416;", "reply": "^EX010416(\\d);$", "set": "EX0104{value}16;"}, "valid": false, "field": "set"},
+      {"name": "set without a placeholder", "cat": {"protocol": "ascii", "read": "EX0104161;", "reply": "^EX0104161(\\d);$", "set": "EX0104161;"}, "valid": false, "field": "set"},
+      {"name": "set with two commands", "cat": {"protocol": "ascii", "read": "MD0;", "reply": "^MD0(\\w);$", "set": "GT04;MD0{value};"}, "valid": false, "field": "set"},
+      {"name": "read without reply", "cat": {"protocol": "ascii", "read": "EX010413;", "set": "EX010413{value:03};"}, "valid": false, "field": "reply"},
+      {"name": "reply not anchored", "cat": {"protocol": "ascii", "read": "EX010413;", "reply": "EX010413(\\d{3});", "set": "EX010413{value:03};"}, "valid": false, "field": "reply"},
+      {"name": "reply for a different command", "cat": {"protocol": "ascii", "read": "EX010413;", "reply": "^EX010414(\\d);$", "set": "EX010413{value:03};"}, "valid": false, "field": "reply"},
+      {"name": "reply with two groups", "cat": {"protocol": "ascii", "read": "EX010413;", "reply": "^EX010413(\\d)(\\d\\d);$", "set": "EX010413{value:03};"}, "valid": false, "field": "reply"},
+      {"name": "reply without the terminator", "cat": {"protocol": "ascii", "read": "EX010413;", "reply": "^EX010413(\\d{3})$", "set": "EX010413{value:03};"}, "valid": false, "field": "reply"},
+      {"name": "CI-V reply with a ';'", "cat": {"protocol": "civ", "read": "1A050071", "reply": "^1A050071([0-9A-F]{2});$", "set": "1A050071{value:02}"}, "valid": false, "field": "reply"},
+      {"name": "reply without read", "cat": {"protocol": "ascii", "reply": "^EX010413(\\d{3});$", "set": "EX010413{value:03};"}, "valid": false, "field": "reply"}
     ]
   }
 }

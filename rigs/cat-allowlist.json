@@ -1,6 +1,6 @@
 {
   "$comment": "openRMS raw-CAT allow-list. Normative for profile `cat` steps and for any client that sends raw CAT from a profile (openRMS-Rigs, rigctlWeb). Anything not allowed here is refused; `denied` lists are documentation and test material, and win over `families` if both match. See profile.md, 'Raw CAT allow-list'.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "value_pattern": "^[A-Za-z0-9]{1,16}$",
   "placeholder_pattern": "\\{value(?::(\\d+))?\\}",
   "rules": [
@@ -11,6 +11,13 @@
     "When several family prefixes match, the longest one decides read, set and safety.",
     "A family with safety 'tx' changes transmit behaviour: a step that sets it is safety tx."
   ],
+  "step_rules": {
+    "$comment": "Rules that bind a profile step's read, set and reply together, because ASCII CAT can't tell a read from a set by syntax. Clients that send `read` before the operator confirms (for a snapshot) must enforce these too.",
+    "set": "Exactly one {value} or {value:NN} placeholder, at the end: immediately before the terminator (ascii) or last (civ). ascii: a single command.",
+    "read": "Equals the set template with its placeholder removed (case-insensitive for civ hex). A step without set may have a read only when the read's family has set: false. ascii: a single command.",
+    "reply": "Required with read, and only with read. Exactly '^' + read without its terminator + '(' + pattern + ')' + terminator + '$'. The pattern has no parentheses and uses only letters, digits and \\ [ ] { } , + * ? -. Capture group 1 is the value.",
+    "send": "With rigctld, send a set with `send_cmd_rx <cmd> 0` (expected reply length 0). Plain send_cmd waits for a reply that a set never sends (about 2 s on the FT-DX10 backend)."
+  },
   "protocols": {
     "ascii": {
       "manufacturers": ["Kenwood", "Yaesu", "Elecraft"],

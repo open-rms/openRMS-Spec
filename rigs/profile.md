@@ -28,7 +28,7 @@ two ways of writing the same document, and the API converts between them (`POST 
 | `level` | `L <name> <value>` | Validated against the catalog's range for that radio. |
 | `func` | `U <name> 0/1` | Allow-list only (the same as rigctlWeb's v1). Keying functions are rejected. |
 | `parm` | `P <name> <value>` | |
-| `cat` | rigctld `send_cmd` (`w`) | For menu items Hamlib can't reach. `ascii` (Kenwood/Yaesu/Elecraft) or `civ` (Icom CI-V body in hex, framed by the client). `read` + `reply` regex (group 1 = value) + `set` template (`{value}`, `{value:03}`). Always reviewed by a moderator. |
+| `cat` | rigctld `send_cmd_rx <cmd> 0` for sets, `send_cmd` for reads | For menu items Hamlib can't reach. `ascii` (Kenwood/Yaesu/Elecraft) or `civ` (Icom CI-V body in hex, framed by the client). `read` + `reply` regex (group 1 = value) + `set` template (`{value}`, `{value:03}`). Always reviewed by a moderator. |
 | `manual` | the person, on the radio | `manual.menu` is the menu path, `manual.value` the setting. Clients show it as a checklist item. |
 
 Common fields:
@@ -132,6 +132,30 @@ it, and rigctlWeb uses the same file, so both enforce the same rules. It has, pe
   template filled with zeros, and the set template rendered with the value); split ascii on `;`
   and check each part; CI-V is the hex body only, without preamble, addresses or FD. Values
   must match `value_pattern`.
+
+### Step rules: read, set and reply are bound together
+
+ASCII CAT can't tell a read from a set by syntax: `PC100;` *sets* power to 100 although `PC`
+allows reads. Clients send `read` before the operator confirms anything (to snapshot the
+current value), so a `read` that is really a set would change the radio unasked. The server
+therefore rejects a `cat` step unless (`step_rules` in `cat-allowlist.json`):
+
+- `set` has exactly one `{value}` or `{value:NN}`, at the end (just before `;` for ascii), and
+  ascii `set` is a single command;
+- `read` equals `set` with the placeholder removed: `set: "EX010413{value:03};"` means
+  `read: "EX010413;"`. This applies to `check_only` steps too: they carry a `set` template
+  only to check the read against, and it is never sent. A step without `set` may have a `read`
+  only when the read's family is read-only (`set: false`, e.g. meters);
+- `reply` is given whenever `read` is, and is exactly `^` + the read without its `;` + one
+  capture group + `;$` (CI-V: no `;`): `^EX010413(\d{3});$`. The group may use only letters,
+  digits and `\ [ ] { } , + * ? -`.
+
+Moderators: check that the menu item number in `set` is the setting the step names, from the
+radio's CAT reference, and that `read` is the bare query for the same item. Clients that check
+locally should enforce the same rules; `examples/check-vectors.json` has cases (`steps`).
+
+With rigctld, send sets with `send_cmd_rx <cmd> 0` (no reply expected). Plain `send_cmd`
+waits for a reply a set never sends, about 2 s per command on the FT-DX10 backend.
 
 Menu items (Yaesu `EX`, Icom `1A05`) are allowed as a family. Some of them change transmit
 behaviour or assign keying to a serial line, so moderators review every `cat` step, and authors
