@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: openRMS Rigs API
-  version: 1.3.0-alpha
+  version: 1.4.0-alpha
   summary: Crowd-sourced radio settings profiles, per radio model and operation.
   description: |
     Profiles say how to set up one radio model for one operation (FT8, CW, Winlink ARDOP...).
@@ -31,7 +31,10 @@ info:
     `rel="alternate"` JSON link to `/api/v1/profiles/{id}`. Ids that aren't public get a 404.
     The id is stable across revisions; the page shows the published revision.
 
-    **Privacy.** Public reads need no auth and carry nothing about the user in the URL.
+    **Privacy.** Public reads need no auth and carry nothing about the user in the URL. When an
+    account is deleted (Accounts `user.deleted`), its published profiles stay as CC-BY-SA public
+    record, credited as the person chose (`/me/deletion-preference`); everything else Rigs holds
+    for that account is deleted or anonymised.
 
     **Auth** (writes only). An access token from openRMS Accounts (`Authorization: Bearer`,
     `aud` = `https://rigs.openrms.dev`, see `../accounts/identity.md`), or an openRMS API key
@@ -516,6 +519,16 @@ paths:
       responses: { "200": { description: OK } }
   /me:
     get: { tags: [contribute], summary: "Who am I (with `radios`, the token's radio macros)", security: [{ bearer: [] }, { key: [] }], responses: { "200": { description: OK } } }
+  /me/deletion-preference:
+    get: { tags: [contribute], summary: "How my published profiles are credited if I delete my openRMS account", security: [{ bearer: [] }], responses: { "200": { description: "{credit: callsign|deleted|name, name}" } } }
+    put:
+      tags: [contribute]
+      summary: Set it (default deleted, shown as "deleted account")
+      security: [{ bearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [credit], properties: { credit: { enum: [callsign, deleted, name] }, name: { type: string, maxLength: 40, description: "credit name: plain letters, digits, spaces and . , ' ( ) - /" } } } } } }
+      responses: { "200": { description: OK }, "400": { description: Bad request } }
+  /me/export:
+    get: { tags: [contribute], summary: "Everything Rigs holds for me (identity.md §4c), as JSON", security: [{ bearer: [] }], responses: { "200": { description: OK } } }
   /me/radios:
     get:
       tags: [contribute]
