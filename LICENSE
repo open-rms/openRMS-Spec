@@ -1,0 +1,11 @@
+openRMS-Spec is dual-licensed by file type:
+
+- Machine-readable contracts (OpenAPI documents, JSON Schemas, example data files) and any
+  code generated from them: Mozilla Public License 2.0. See LICENSE-MPL-2.0.
+    directory/openapi.yaml, rigs/openapi.yaml, rigs/profile.schema.json, rigs/examples/*
+
+- Prose specifications and documentation (Markdown files): Creative Commons Attribution 4.0
+  International (CC-BY-4.0). See LICENSE-CC-BY-4.0.
+    *.md in every folder
+
+SPDX-License-Identifier: MPL-2.0 AND CC-BY-4.0
