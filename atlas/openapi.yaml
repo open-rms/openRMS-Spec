@@ -1,14 +1,14 @@
 openapi: 3.1.0
 info:
-  title: openRMS Directory API
+  title: openRMS Atlas API
   version: 0.1.0
   summary: Open, API-first directory of radio email gateways on every mode.
   description: |
     Read endpoints are public and need no key. Writes need an **openRMS Accounts**
-    access token (`Authorization: Bearer <JWT>`, audience = this Directory, see
+    access token (`Authorization: Bearer <JWT>`, audience = this Atlas, see
     `openRMS-Spec/accounts/identity.md`) whose account has a callsign. Sign-up,
     callsigns, clubs and staff roles are managed in openRMS Accounts. Gateway
-    software and watchers use API keys owned by the Directory (`orms_`, `ormsw_`).
+    software and watchers use API keys owned by Atlas (`orms_`, `ormsw_`).
 
     **Winlink-compatible feed:** `/gateway/status.json` returns the same shape as
     `https://api.winlink.org/gateway/status.json`, so Pat, EmComm Tools and other
@@ -303,7 +303,7 @@ paths:
   /api/v1/watch/link:
     post:
       tags: [Gateway software]
-      summary: "Watcher linking: with its device-flow token (aud = Directory), pick or create a watcher and get its ormsw_ key"
+      summary: "Watcher linking: with its device-flow token (aud = Atlas), pick or create a watcher and get its ormsw_ key"
       description: Body `{watcherId}` or `{name, gridsquare?, locationPrecision?}`. Rotates the watcher's key. The device flow itself runs in openRMS Accounts.
       security: [{ session: [] }]
       responses: { "200": { description: "{key, watcherId, name}" }, "403": { $ref: "#/components/responses/Error" }, "404": { $ref: "#/components/responses/Error" } }
@@ -422,7 +422,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: openRMS Accounts access token (aud = the Directory). Named "session" for history.
+      description: openRMS Accounts access token (aud = Atlas). Named "session" for history.
     apiKey:
       type: apiKey
       in: header

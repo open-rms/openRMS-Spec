@@ -1,7 +1,7 @@
 # Winlink-compatible feed
 
 Status: **draft v0** (2026-11-25). Implementation:
-`openRMS-Directory/src/compat/winlink-status.ts`.
+`openRMS-Atlas/src/compat/winlink-status.ts`.
 
 `GET|POST /gateway/status.json` returns the shape of
 `https://api.winlink.org/gateway/status.json`, so software that reads Winlink's
@@ -37,6 +37,6 @@ Same as Winlink: `Mode` (AnyAll, Packet, Pactor, RobustPacket, AllHf),
 | EmComm Tools Community | `et-winlink-data` runs jq over Pat's `rmslist.json` (`Callsign, BaseCallsign, Latitude, Longitude, SupportedModes, Mode, Frequency`; keeps Mode 0, 41, 43, 50–54). It ships a prebuilt `rmslist.csv`, so `et-winlink-data` must be re-run after the cache changes | the same cache file (verified: ETC's own jq filter reads our feed); or point its script at `/gateway/status.json` |
 | 73 Linux (PatMenu3) | `getardoplist` runs `pat rmslist … --force-download` and parses the text | **not yet**: `--force-download` skips the cache and re-fetches from Winlink, overwriting our file. Needs a PatMenu change (drop `--force-download` after a sync, or call our feed) or the upstream Pat option |
 
-Test: `openRMS-Directory/test/compat.test.ts` re-serializes a 2,125-gateway
+Test: `openRMS-Atlas/test/compat.test.ts` re-serializes a 2,125-gateway
 Winlink sample and checks that the real `pat rmslist` prints byte-identical
 output for ours and for Winlink's.

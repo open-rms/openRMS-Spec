@@ -1,6 +1,6 @@
-# Directory modes and compat mapping
+# Atlas modes and compat mapping
 
-Status: **draft v0** (2026-11-25). Implementation: `openRMS-Directory/src/modes.ts`.
+Status: **draft v0** (2026-11-25). Implementation: `openRMS-Atlas/src/modes.ts`.
 
 ## Modem ids
 

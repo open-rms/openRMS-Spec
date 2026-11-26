@@ -1,11 +1,11 @@
-# Watch feed: community watchers → Directory (draft v0)
+# Watch feed: community watchers → Atlas (draft v0)
 
-> Status: **draft for review** between openRMS-Watch and openRMS-Directory, 2026-11-25.
+> Status: **draft for review** between openRMS-Watch and openRMS-Atlas, 2026-11-25.
 > Nothing here is implemented yet. Open questions are marked **Q**.
 
 A *watcher* is an `openrms-watch` install that hears Mercury (later other modems) connect
 frames on the air. Contributing is opt-in. A watcher always keeps its own local database and
-web page; contributing adds an upload of the same events to the Directory, which shows a live
+web page; contributing adds an upload of the same events to Atlas, which shows a live
 feed, "heard on air" evidence on gateway pages, and a contributor list.
 
 ## 1. Accounts, watchers and tokens
@@ -24,10 +24,10 @@ feed, "heard on air" evidence on gateway pages, and a contributor list.
   sets `metadata.watcherId`; ingest also checks that the watcher belongs to the key's
   `referenceId`.
 - **Since 2026-11-25 (identity.md §5):** the device flow runs at openRMS-Accounts and yields an
-  OAuth access token for the Directory (`resource`/`aud` = the Directory). The watcher calls
+  OAuth access token for Atlas (`resource`/`aud` = Atlas). The watcher calls
   `POST /api/v1/watch/link {watcherId} | {name, gridsquare?}` once with it and receives its
   `ormsw_` key; `/api/v1/me/watchers/link`, `device_link` and `/api/v1/watch/link/complete` are gone.
-  The text below describes the earlier Directory-hosted flow.
+  The text below describes the earlier Atlas-hosted flow.
 - **Getting the token without copy-paste:** Better Auth `device-authorization` (RFC 8628).
   The watcher's settings page shows a code and the URL `/{site}/link`; the user signs in and
   approves, choosing an existing watcher or creating one. Note: the device flow yields a
@@ -40,8 +40,8 @@ feed, "heard on air" evidence on gateway pages, and a contributor list.
 
 > **Identity is moving to openRMS-Accounts (2026-11-25, see `../accounts/identity.md`).** After
 > the AC1 extraction, the device flow above runs against `auth.openrms.dev` (client
-> `openrms-watch`, `resource=https://directory.openrms.dev`) and yields an OAuth access token instead
-> of a Better Auth session. The watcher uses it once, as a bearer token to the Directory, to get
+> `openrms-watch`, `resource=https://atlas.openrms.dev`) and yields an OAuth access token instead
+> of a Better Auth session. The watcher uses it once, as a bearer token to Atlas, to get
 > its `ormsw_` key, then discards it. Watcher keys, ingest and everything below are unchanged.
 
 ## 2. Upload: `POST /api/v1/watch/ingest`
@@ -92,17 +92,17 @@ Response: `200 {"accepted": n, "duplicate": m, "rejected": [{"id":..., "error":.
 
 - **Watcher:** decodes audio (Mercury already drops frames that fail their CRC), folds repeats
   into attempts, filters obvious junk, and attaches its own naming guess as a `hint`.
-- **Directory:** validates every upload anyway (it can't trust a client's own judgment), resolves
+- **Atlas:** validates every upload anyway (it can't trust a client's own judgment), resolves
   names against the current list, combines evidence across watchers (`confirmed`), and decides
   what the public sees (client-callsign toggle, opt-outs).
 
-Watchers **should** send `frame` events: they are the raw evidence, and they let the Directory
+Watchers **should** send `frame` events: they are the raw evidence, and they let Atlas
 re-resolve old sightings when listings change. `attempt` events are **optional** summaries; the
-Directory stores them and uses them for display, and derives its own when only frames arrive.
+Atlas stores them and uses them for display, and derives its own when only frames arrive.
 
 `hint` (on `frame` and `attempt`, optional) is the watcher's local resolution:
 `{"callsign": "W1RMS-10" | null, "match": "heard" | "inferred" | "ambiguous" | "unknown",
-"candidates": [...]}`. The Directory stores it and may show it until its own resolution runs,
+"candidates": [...]}`. Atlas stores it and may show it until its own resolution runs,
 but never treats it as authoritative and never uses it for `confirmed`.
 
 ## 3. Callsign list for local naming: `GET /api/v1/watch/callsigns`
@@ -111,7 +111,7 @@ Public, ETag'd, about 100 KB: `[{"callsign":"W1RMS-10","crc":"3DEF","gatewayId":
 for every listed gateway callsign (all SSIDs as listed, never brute-forced). `dialHz` lists
 the dial frequency (centre − 1500) of **every** listed Mercury channel of that gateway, not just
 the first, so the local app can narrow candidates by frequency. Modem ids are the
-Directory's (`modes.md`). Winlink-sourced rows are left out when the Directory runs with
+Atlas's (`modes.md`). Winlink-sourced rows are left out when Atlas runs with
 `WINLINK_PUBLISH=false`. The watcher refreshes it daily, so a local-only user gets names too,
 without a hand-made calls file.
 
@@ -123,7 +123,7 @@ Mercury channel within ±200 Hz of the heard dial, then (2) Mercury-capable gate
 then (3) callsigns heard in clear in CALL/CQ frames. A match that is still ambiguous is shown as
 "one of: A, B", never as a single name.
 
-## 4. What the Directory derives (server side)
+## 4. What Atlas derives (server side)
 
 - **Sightings:** per (gateway CRC, dial ± 80 Hz): first/last heard, heard by N watchers, best SNR,
   clients count. *Heard* means the station itself transmitted (ACCEPT or CQ), as in the local app;
@@ -157,7 +157,7 @@ then (3) callsigns heard in clear in CALL/CQ frames. A match that is still ambig
   uploaded.
 - **Abuse:** events are attributable to an account; moderators can disable a watcher and purge
   its events (new RBAC permissions `watcher: ["disable", "purge"]` for moderator and up, see
-  `openRMS-Directory/src/rbac.ts`; actions go to the audit log). Sanity checks drop impossible events (future timestamps, frequencies outside amateur
+  `openRMS-Atlas/src/rbac.ts`; actions go to the audit log). Sanity checks drop impossible events (future timestamps, frequencies outside amateur
   allocations, more than ~1 frame/s sustained). A single watcher can create a sighting but not
   `confirmed`.
 - **Decided (maintainer, 2026-11-25):** any account may contribute; only watchers of
@@ -171,7 +171,7 @@ first contribution date, `live` (a status event within 10 min). The site shows i
 list with a live indicator. Accounts with `public=false` watchers are counted in totals but not
 named.
 
-## 8. Directory implementation notes
+## 8. Atlas implementation notes
 
 - Hono plus Postgres. Ingest parses NDJSON line by line and inserts with
   `ON CONFLICT (watcher_id, event_id) DO NOTHING`, so duplicates count without errors.
@@ -179,20 +179,20 @@ named.
   kept indefinitely.
 - SSE through Hono's `streamSSE` on the Node server. With more than one API process, fan out
   through Postgres `LISTEN/NOTIFY`. The reverse proxy must not buffer `text/event-stream`.
-- Frequencies: the Directory stores the **centre**; `dialHz` here is centre − 1500, the same
+- Frequencies: Atlas stores the **centre**; `dialHz` here is centre − 1500, the same
   convention Pat uses for HF ARQ modes.
 
 ## 9. Versioning
 
 The ingest body carries no version field; new event fields are additive and ignored by older
 servers. A breaking change gets `/api/v2/watch/ingest`. The OpenAPI paths go into
-`directory/openapi.yaml` once this draft is agreed.
+`atlas/openapi.yaml` once this draft is agreed.
 
 ---
-**Review changes by the Directory session (2026-11-25):** watcher keys use a separate
+**Review changes by Atlas session (2026-11-25):** watcher keys use a separate
 Better Auth key configuration (`configId: "watcher"`) instead of a metadata scope, and are
 minted server-side; the device flow returns a session token that is traded for a key; CRC
 resolution is multi-candidate with frequency disambiguation; unlisted CRCs aren't claimable;
-added RBAC permissions for watcher moderation; added §8 Directory implementation notes and
+added RBAC permissions for watcher moderation; added §8 Atlas implementation notes and
 renumbered Versioning to §9. Later the same day, by user decision: the optional `attempt`
 event, the `hint` field, and the "Division of work" section.
