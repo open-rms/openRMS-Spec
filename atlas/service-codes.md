@@ -47,9 +47,9 @@ Every code is either **public** or **unlisted**.
 - `PUBLIC`, `EMCOMM`, `MERCURY`, `XARA` and `DATA2G` start public.
 - A code nobody has used before is registered as **unlisted** the first time a sysop saves
   it. It works at once.
-- Staff (`servicecode:edit`, admin and up) can make a code public or unlisted. `PUBLIC`
-  and `EMCOMM` always stay public. Moderators can see every code (`servicecode:view`).
-  Changes are audited.
+- Admins and superadmins (`servicecode:view`, `servicecode:edit`) see every code, with how
+  many gateways and sysops use it, and can make a code public or unlisted. Moderators can't
+  see codes. `PUBLIC` and `EMCOMM` always stay public. Changes are audited.
 - In public output, a channel's `serviceCodes` hold only the codes the request may see.
   A channel with none left is dropped, and so is a gateway left with no channels. Stored
   codes never appear in public output. Owners see their own stored codes on
@@ -80,6 +80,23 @@ To make guessing slow:
   the same empty answer.
 - An IP that keeps asking for non-public codes that match nothing is logged every
   10 misses an hour. The log line holds counts only, never the codes.
+
+### Search demand (admins only)
+
+To spot common codes worth making public, the Atlas counts searches for codes that aren't
+public: the Site's code box, `?serviceCode=` and the feed's `ServiceCodes`, after the rate
+limit.
+
+- **No IP is stored.** Each searcher is counted once per code per UTC day, using an HMAC of
+  their IP under a random key that lives only in memory and is replaced daily and on every
+  restart. The table holds only `(code, day, searchers, searches)`.
+- **Threshold:** `GET /api/v1/admin/service-codes/searches` shows a code only once its
+  searcher-days add up to 3 or more within 90 days, so one person looking up their own
+  group's code doesn't appear. Rows older than 90 days are deleted.
+- These counts still record which codes people typed, including private ones that reach the
+  threshold, so only admins and superadmins can see them.
+- An admin can make a searched code public even if nobody lists it yet:
+  `PATCH /api/v1/admin/service-codes/{code}` creates the code.
 
 ### On-air sightings
 

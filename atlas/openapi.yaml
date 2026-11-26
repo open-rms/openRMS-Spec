@@ -463,7 +463,7 @@ paths:
   /api/v1/admin/service-codes:
     get:
       tags: [Moderation]
-      summary: Every service code, including unlisted ones, with use counts (servicecode:view; moderator and up)
+      summary: Every service code, including unlisted ones, with use counts (servicecode:view; admin and superadmin)
       security: [{ session: [] }]
       responses:
         "200":
@@ -483,15 +483,45 @@ paths:
                         description: { type: string }
                         channels: { type: integer }
                         gateways: { type: integer }
+                        owners: { type: integer, description: Distinct sysops (accounts or clubs) listing under it }
+                        lastUsedAt: { type: [string, "null"], format: date-time }
+                        searchers: { type: integer, description: Searcher-days in the last 90 days }
                         createdAt: { type: string, format: date-time }
                         updatedAt: { type: string, format: date-time }
                         updatedBy: { type: [string, "null"] }
+        "403": { $ref: "#/components/responses/Error" }
+  /api/v1/admin/service-codes/searches:
+    get:
+      tags: [Moderation]
+      summary: Non-public codes people searched for (servicecode:view; admin and superadmin)
+      description: Searcher-days over the last 90 days; a code shows only at 3 or more. No IPs are stored (service-codes.md).
+      security: [{ session: [] }]
+      responses:
+        "200":
+          description: Demand
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  days: { type: integer }
+                  minSearchers: { type: integer }
+                  searches:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        code: { type: string }
+                        searchers: { type: integer }
+                        searches: { type: integer }
+                        lastDay: { type: string, format: date }
+                        visibility: { type: [string, "null"], description: "unlisted if some listing uses it, null if none" }
         "403": { $ref: "#/components/responses/Error" }
   /api/v1/admin/service-codes/{code}:
     patch:
       tags: [Moderation]
       summary: Make a code public or unlisted, or set its description (servicecode:edit; admin and superadmin; audited)
-      description: PUBLIC and EMCOMM always stay public.
+      description: Creates the code if it doesn't exist yet (e.g. promoting a searched code). PUBLIC and EMCOMM always stay public.
       security: [{ session: [] }]
       parameters: [{ name: code, in: path, required: true, schema: { type: string } }]
       requestBody:
