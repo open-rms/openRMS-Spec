@@ -39,7 +39,7 @@ paths:
       parameters:
         - { name: modem, in: query, schema: { type: string }, description: "Comma-separated modem ids, e.g. `mercury,ardop`", example: mercury }
         - { name: band, in: query, schema: { type: string }, description: "Comma-separated bands, e.g. `40m,80m`" }
-        - { name: serviceCode, in: query, schema: { type: string }, description: Comma-separated service codes }
+        - { name: serviceCode, in: query, schema: { type: string }, description: "Comma-separated service codes, matched against each channel's feedServiceCode (the code the compat feed publishes: Mercury, XARA and Data2G channels count under MERCURY, XARA and DATA2G even if the sysop typed PUBLIC). Case-insensitive. Behavior change 2026-11-25: before this it matched the stored serviceCode." }
         - { name: status, in: query, schema: { type: string }, description: "Comma-separated: online, listed, stale, offline" }
         - { name: source, in: query, schema: { type: string, enum: [openrms, winlink] } }
         - { name: claimed, in: query, schema: { type: boolean }, description: "Only gateways with sysop-provided details (owner listings and claimed Winlink listings)" }
@@ -82,8 +82,22 @@ paths:
   /api/v1/stats:
     get:
       tags: [Gateways]
-      summary: Counts by modem, source, status and band
-      responses: { "200": { description: Stats, content: { application/json: { schema: { type: object } } } } }
+      summary: Counts by modem, source, status, band and service code
+      responses:
+        "200":
+          description: Stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  gateways: { type: integer }
+                  channels: { type: integer }
+                  byModem: { type: object, additionalProperties: { type: integer }, description: Gateways per modem }
+                  bySource: { type: object, additionalProperties: { type: integer } }
+                  byStatus: { type: object, additionalProperties: { type: integer } }
+                  byBand: { type: object, additionalProperties: { type: integer }, description: Channels per band }
+                  byServiceCode: { type: object, additionalProperties: { type: integer }, description: Gateways per feedServiceCode }
 
   /gateway/status.json:
     get:
@@ -461,7 +475,8 @@ components:
         modemLabel: { type: string }
         variant: { type: [string, "null"], description: "Bandwidth or speed label: 500, 2750, 1200, WIDE…" }
         modemVersion: { type: [string, "null"] }
-        serviceCode: { type: string }
+        serviceCode: { type: string, description: Service code as stored (Winlink's, or what the sysop typed) }
+        feedServiceCode: { type: string, description: "Service code the compat feed publishes this channel under; MERCURY, XARA or DATA2G for those modes" }
         operatingHours: { type: string }
         antenna: { type: string }
         radioRange: { type: string }

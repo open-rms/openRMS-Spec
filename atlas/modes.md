@@ -82,6 +82,9 @@ sysops use on Winlink (e.g. Winlink Express "PUBLIC XARA MERCURY DATA2G"). Other
 modes get it as soon as a client can dial them. Each new modem adds its own service code
 and a compat rule here.
 
+The public API exposes this as `feedServiceCode` on every channel. `GET /api/v1/gateways?serviceCode=`
+and `/api/v1/stats` `byServiceCode` use it, so the Site's service-code filter shows what Pat sees.
+
 ## Winlink import
 
 The Atlas asks Winlink for the service codes in `WINLINK_SERVICE_CODES` (default
