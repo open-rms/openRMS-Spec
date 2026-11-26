@@ -82,13 +82,15 @@ sysops use on Winlink (e.g. Winlink Express "PUBLIC XARA MERCURY DATA2G"). Other
 modes get it as soon as a client can dial them. Each new modem adds its own service code
 and a compat rule here.
 
-The public API exposes this as `feedServiceCode` on every channel. `GET /api/v1/gateways?serviceCode=`
-and `/api/v1/stats` `byServiceCode` use it, so the Site's service-code filter shows what Pat sees.
+The public API exposes these codes as `serviceCodes` on every channel. `GET /api/v1/gateways?serviceCode=`
+and `/api/v1/stats` `byServiceCode` use them, so the Site's service-code filter shows what Pat sees.
+Only `PUBLIC` and `EMCOMM` are swapped for the mode's code; a custom group code stays as typed.
+See `service-codes.md` for custom codes and visibility.
 
 ## Winlink import
 
 The Atlas asks Winlink for the service codes in `WINLINK_SERVICE_CODES` (default
-`PUBLIC,MERCURY,XARA,DATA2G,EMCOMM`). A VARA channel listed under `MERCURY`, `XARA` or
+`PUBLIC,MERCURY,XARA,DATA2G,EMCOMM`), skipping any that aren't public (`service-codes.md`). A VARA channel listed under `MERCURY`, `XARA` or
 `DATA2G` is stored as that modem. Data2G's `VARA 500` maps to the 500 cap; other VARA
 strings map to 2400. Winlink-listed channels go back out in the compat feed with
 Winlink's own `SupportedModes`, `Mode` and `ServiceCode`, unchanged.

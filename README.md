@@ -9,7 +9,7 @@ OpenAPI), see below.
 
 | Folder | What | Used by |
 |---|---|---|
-| `atlas/` | `openapi.yaml` (Atlas API), `modes.md` (modem ids, compat mapping), `winlink-compat.md` | [openRMS-Atlas](https://github.com/open-rms/openRMS-Atlas), [openRMS-Site](https://github.com/open-rms/openRMS-Site), Pat and other clients |
+| `atlas/` | `openapi.yaml` (Atlas API), `modes.md` (modem ids, compat mapping), `service-codes.md` (custom codes, visibility), `winlink-compat.md` | [openRMS-Atlas](https://github.com/open-rms/openRMS-Atlas), [openRMS-Site](https://github.com/open-rms/openRMS-Site), Pat and other clients |
 | `watch/` | `feed.md`: watcher uploads, sightings, live stream, privacy | openRMS-Watch, openRMS-Atlas |
 | `accounts/` | `identity.md`: issuer, tokens and claims, service keys, webhooks | every openRMS service |
 | `rigs/` | `profile.md`, `profile.schema.json`, `openapi.yaml`, `examples/` | openRMS-Rigs, rigctlWeb, hamstack |

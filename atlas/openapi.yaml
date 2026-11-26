@@ -14,7 +14,14 @@ info:
     `https://api.winlink.org/gateway/status.json`, so Pat, EmComm Tools and other
     clients can read it with no code changes. See `winlink-compat.md`.
 
-    Mode codes and modem ids: `modes.md`.
+    Mode codes and modem ids: `modes.md`. Service codes and their visibility:
+    `service-codes.md`.
+
+    **Unlisted service codes are not secret.** An unlisted code is never enumerated
+    (no lists, stats, downloads or suggestions) and matches only an exact
+    `serviceCode` / `ServiceCodes` request, but anyone who guesses it sees those
+    listings. Each IP may look up a limited number of distinct non-public codes per
+    hour (429), and at most 5 in one request (400).
   license:
     name: MPL-2.0
     identifier: MPL-2.0
@@ -39,7 +46,7 @@ paths:
       parameters:
         - { name: modem, in: query, schema: { type: string }, description: "Comma-separated modem ids, e.g. `mercury,ardop`", example: mercury }
         - { name: band, in: query, schema: { type: string }, description: "Comma-separated bands, e.g. `40m,80m`" }
-        - { name: serviceCode, in: query, schema: { type: string }, description: "Comma-separated service codes, matched against each channel's feedServiceCode (the code the compat feed publishes: Mercury, XARA and Data2G channels count under MERCURY, XARA and DATA2G even if the sysop typed PUBLIC). Case-insensitive. Behavior change 2026-11-25: before this it matched the stored serviceCode." }
+        - { name: serviceCode, in: query, schema: { type: string }, description: "Comma-separated service codes, matched against each channel's serviceCodes (the codes the compat feed publishes: Mercury, XARA and Data2G channels count under MERCURY, XARA and DATA2G even if the sysop typed PUBLIC). Case-insensitive. Naming an unlisted code also makes channels under it visible; such requests are rate-limited per IP and never cached publicly. An unknown code and an unlisted code with no listings return the same empty result. Behavior change 2026-11-25: before this it matched the stored serviceCode." }
         - { name: status, in: query, schema: { type: string }, description: "Comma-separated: online, listed, stale, offline" }
         - { name: source, in: query, schema: { type: string, enum: [openrms, winlink] } }
         - { name: claimed, in: query, schema: { type: boolean }, description: "Only gateways with sysop-provided details (owner listings and claimed Winlink listings)" }
@@ -63,14 +70,35 @@ paths:
                   offset: { type: integer }
                   limit: { type: integer }
                   gateways: { type: array, items: { $ref: "#/components/schemas/Gateway" } }
+        "429": { $ref: "#/components/responses/TooManyCodeLookups" }
   /api/v1/gateways/{idOrCallsign}:
     get:
       tags: [Gateways]
       summary: One gateway by id or callsign (with SSID)
-      parameters: [{ name: idOrCallsign, in: path, required: true, schema: { type: string } }]
+      description: Channels under unlisted codes are shown only when `serviceCode` names them; a gateway whose channels are all unlisted is 404 otherwise.
+      parameters:
+        - { name: idOrCallsign, in: path, required: true, schema: { type: string } }
+        - { name: serviceCode, in: query, schema: { type: string }, description: Comma-separated codes, as on the list endpoint }
       responses:
         "200": { description: Gateway, content: { application/json: { schema: { $ref: "#/components/schemas/Gateway" } } } }
         "404": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/TooManyCodeLookups" }
+  /api/v1/service-codes:
+    get:
+      tags: [Gateways]
+      summary: Public service codes, with how many gateways use each
+      description: Unlisted codes are never listed here.
+      responses:
+        "200":
+          description: Codes, PUBLIC first then by use
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  serviceCodes:
+                    type: array
+                    items: { type: object, properties: { code: { type: string }, description: { type: string }, gateways: { type: integer } } }
   /api/v1/modems:
     get:
       tags: [Gateways]
@@ -97,7 +125,7 @@ paths:
                   bySource: { type: object, additionalProperties: { type: integer } }
                   byStatus: { type: object, additionalProperties: { type: integer } }
                   byBand: { type: object, additionalProperties: { type: integer }, description: Channels per band }
-                  byServiceCode: { type: object, additionalProperties: { type: integer }, description: Gateways per feedServiceCode }
+                  byServiceCode: { type: object, additionalProperties: { type: integer }, description: "Gateways per public service code. All counts here cover public codes only." }
 
   /gateway/status.json:
     get:
@@ -106,12 +134,13 @@ paths:
       parameters:
         - { name: Mode, in: query, schema: { type: string, enum: [AnyAll, Packet, Pactor, RobustPacket, AllHf], default: AnyAll } }
         - { name: HistoryHours, in: query, schema: { type: integer, default: 48 }, description: Gateways heard within this many hours (hand-confirmed openRMS listings are always included) }
-        - { name: ServiceCodes, in: query, schema: { type: array, items: { type: string }, default: [PUBLIC] }, style: form, explode: true, description: Repeat or comma-separate }
+        - { name: ServiceCodes, in: query, schema: { type: array, items: { type: string }, default: [PUBLIC] }, style: form, explode: true, description: "Repeat or comma-separate. A channel listed under several codes appears once per requested code. Unlisted codes are served only when named; such requests are rate-limited per IP and sent with Cache-Control: private, no-store." }
         - { name: key, in: query, schema: { type: string }, description: Accepted and ignored, for drop-in compatibility }
         - { name: source, in: query, schema: { type: string, enum: [openrms, winlink] }, description: openRMS extension }
         - { name: extensions, in: query, schema: { type: boolean }, description: "openRMS extension: add an `OpenRMS` object to gateways and channels with the real modem" }
       responses:
         "200": { description: Feed, content: { application/json: { schema: { $ref: "#/components/schemas/WinlinkStatus" } } } }
+        "429": { $ref: "#/components/responses/TooManyCodeLookups" }
     post:
       tags: [Compat]
       summary: Same as GET, parameters form-encoded (what Pat sends)
@@ -127,6 +156,7 @@ paths:
                 key: { type: string }
       responses:
         "200": { description: Feed, content: { application/json: { schema: { $ref: "#/components/schemas/WinlinkStatus" } } } }
+        "429": { $ref: "#/components/responses/TooManyCodeLookups" }
   /export/pat/rmslist.json:
     get:
       tags: [Compat]
@@ -134,6 +164,7 @@ paths:
       description: Save to `$XDG_DATA_HOME/pat/` (see `pat-rmslist-sync.sh`). Same parameters as `/gateway/status.json`.
       responses:
         "200": { description: Feed, content: { application/json: { schema: { $ref: "#/components/schemas/WinlinkStatus" } } } }
+        "429": { $ref: "#/components/responses/TooManyCodeLookups" }
 
   /api/v1/watch/ingest:
     post:
@@ -429,6 +460,49 @@ paths:
       parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
       requestBody: { content: { application/json: { schema: { type: object, properties: { hidden: { type: boolean }, reason: { type: string } } } } } }
       responses: { "200": { description: OK } }
+  /api/v1/admin/service-codes:
+    get:
+      tags: [Moderation]
+      summary: Every service code, including unlisted ones, with use counts (servicecode:view; moderator and up)
+      security: [{ session: [] }]
+      responses:
+        "200":
+          description: Codes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  serviceCodes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        code: { type: string }
+                        visibility: { type: string, enum: [public, unlisted] }
+                        description: { type: string }
+                        channels: { type: integer }
+                        gateways: { type: integer }
+                        createdAt: { type: string, format: date-time }
+                        updatedAt: { type: string, format: date-time }
+                        updatedBy: { type: [string, "null"] }
+        "403": { $ref: "#/components/responses/Error" }
+  /api/v1/admin/service-codes/{code}:
+    patch:
+      tags: [Moderation]
+      summary: Make a code public or unlisted, or set its description (servicecode:edit; admin and superadmin; audited)
+      description: PUBLIC and EMCOMM always stay public.
+      security: [{ session: [] }]
+      parameters: [{ name: code, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { visibility: { type: string, enum: [public, unlisted] }, description: { type: string, maxLength: 300 } } }
+      responses:
+        "200": { description: The updated code }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
 
 components:
   securitySchemes:
@@ -444,6 +518,10 @@ components:
   responses:
     Error:
       description: Error
+      content: { application/json: { schema: { type: object, properties: { error: { type: string } } } } }
+    TooManyCodeLookups:
+      description: This IP has looked up too many distinct non-public service codes this hour (default 60; repeating a code already looked up is free). Retry after the Retry-After seconds. A request naming more than 5 non-public codes gets 400 instead.
+      headers: { Retry-After: { schema: { type: integer } } }
       content: { application/json: { schema: { type: object, properties: { error: { type: string } } } } }
   schemas:
     ModemId:
@@ -475,8 +553,10 @@ components:
         modemLabel: { type: string }
         variant: { type: [string, "null"], description: "Bandwidth or speed label: 500, 2750, 1200, WIDE…" }
         modemVersion: { type: [string, "null"] }
-        serviceCode: { type: string, description: Service code as stored (Winlink's, or what the sysop typed) }
-        feedServiceCode: { type: string, description: "Service code the compat feed publishes this channel under; MERCURY, XARA or DATA2G for those modes" }
+        serviceCodes: { type: array, items: { type: string }, description: "Use this. The service codes this channel is published under that the request may see: public codes, plus unlisted codes the request named exactly. Mercury, XARA and Data2G channels carry MERCURY, XARA or DATA2G in place of PUBLIC/EMCOMM." }
+        serviceCode: { type: string, deprecated: true, description: "Deprecated: serviceCodes[0]. Behavior change 2026-11-26: before this it was the stored code. Owner endpoints (/me/gateways) still return the stored main code here, plus extraServiceCodes." }
+        feedServiceCode: { type: string, deprecated: true, description: "Deprecated: serviceCodes[0]." }
+        extraServiceCodes: { type: array, items: { type: string }, description: Owner endpoints only; never in public output }
         operatingHours: { type: string }
         antenna: { type: string }
         radioRange: { type: string }
@@ -548,7 +628,8 @@ components:
         modem: { $ref: "#/components/schemas/ModemId" }
         variant: { type: string }
         modemVersion: { type: string }
-        serviceCode: { type: string, default: PUBLIC }
+        serviceCode: { type: string, default: PUBLIC, pattern: "^[A-Za-z0-9]{1,16}$", description: Stored uppercase. A code nobody has used yet is registered as unlisted. }
+        extraServiceCodes: { type: array, maxItems: 8, items: { type: string, pattern: "^[A-Za-z0-9]{1,16}$" }, description: "More codes for the same channel (e.g. a group code next to PUBLIC). Unlisted is not secret: anyone who guesses the code sees the listing." }
         operatingHours: { type: string, default: "00-23" }
         antenna: { type: string }
         radioRange: { type: string }
